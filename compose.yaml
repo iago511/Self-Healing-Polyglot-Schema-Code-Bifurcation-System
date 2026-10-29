@@ -1,0 +1,14 @@
+services:
+  agent:
+    image: ${APP_IMAGE:?Defina APP_IMAGE com o digest publicado pela pipeline}
+    restart: unless-stopped
+    init: true
+    env_file: .env
+    environment:
+      PROJECT_PATH: /workspace
+      SNAPSHOTS_DIR: /data/schema_snapshots
+    volumes:
+      - ${TARGET_PROJECT_PATH:?Defina TARGET_PROJECT_PATH}:/workspace
+      - snapshots:/data
+volumes:
+  snapshots:
