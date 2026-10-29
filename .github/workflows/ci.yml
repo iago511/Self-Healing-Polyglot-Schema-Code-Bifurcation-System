@@ -1,16 +1,22 @@
-name: CI
+name: CI e CD
 
 on:
   push:
+    branches: [main]
   pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: cicd-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  validar:
-    name: Testes e imagem Docker
+  ci:
+    name: CI - testes e imagem Docker
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -35,6 +41,9 @@ jobs:
       - name: Verificar dependencias
         run: python -m pip check
 
+      - name: Verificar sintaxe (compileall)
+        run: python -m compileall -q main.py prompts.py snapshot.py tools.py watcher.py
+
       - name: Executar testes
         run: python -m pytest -v --junitxml=test-results.xml
 
@@ -54,3 +63,73 @@ jobs:
 
       - name: Verificar sintaxe na imagem
         run: docker run --rm sh-pscbs:test python -c "import ast, pathlib; arquivos = list(pathlib.Path('/app').glob('*.py')); [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in arquivos]; print(f'{len(arquivos)} arquivos Python validados')"
+
+  cd:
+    name: CD - publicar imagem no GHCR
+    needs: ci
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: production
+      url: https://github.com/${{ github.repository }}/pkgs/container/${{ github.event.repository.name }}
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Baixar o codigo
+        uses: actions/checkout@v4
+
+      - name: Nome da imagem (minusculo)
+        id: image
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Login no GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Construir e publicar imagem
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.image.outputs.name }}:${{ github.sha }}
+            ${{ steps.image.outputs.name }}:latest
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.description=SH-PSCBS - agente self-healing de schema
+
+      - name: Verificar imagem publicada (pull por digest)
+        env:
+          APP_IMAGE: ${{ steps.image.outputs.name }}@${{ steps.build.outputs.digest }}
+        run: |
+          docker pull "$APP_IMAGE"
+          docker run --rm "$APP_IMAGE" python -m pip check
+          docker run --rm "$APP_IMAGE" python -c "import ast, pathlib; arquivos = list(pathlib.Path('/app').glob('*.py')); [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in arquivos]; print(f'{len(arquivos)} arquivos Python validados na imagem publicada')"
+
+      - name: Resumo do deployment
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          {
+            echo "## Deployment publicado"
+            echo ""
+            echo "| Item | Valor |"
+            echo "|---|---|"
+            echo "| Commit | \`${GITHUB_SHA}\` |"
+            echo "| Imagem | \`${IMAGE}:${GITHUB_SHA}\` |"
+            echo "| Digest | \`${DIGEST}\` |"
+            echo ""
+            echo "Executar: \`docker pull ${IMAGE}@${DIGEST}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
