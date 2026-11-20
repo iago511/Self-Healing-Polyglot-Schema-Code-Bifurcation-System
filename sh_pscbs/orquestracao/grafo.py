@@ -5,6 +5,7 @@ from collections.abc import Callable
 from functools import wraps
 from typing import TypedDict
 
+from groq import APIError
 from langgraph.graph import END, START, StateGraph
 
 from sh_pscbs.agentes.correcao import _validar_acoes, gerar_proposta_correcao, identificar_codigo_base
@@ -14,6 +15,7 @@ from sh_pscbs.agentes.revisor import revisar_proposta
 from sh_pscbs.agentes.schema import analisar_schema
 from sh_pscbs.configuracao import Configuracao
 from sh_pscbs.eventos.repositorio import ConflitoVersaoEvento, RegistroEvento, RepositorioEventos
+from sh_pscbs.modelos.llms import codigo_erro_groq
 from sh_pscbs.orquestracao.estado import EtapaCorrecao, EventoSchema
 from sh_pscbs.validacao.executor import validar_proposta_correcao
 
@@ -57,7 +59,12 @@ def criar_grafo(config: Configuracao, repo: RepositorioEventos):
             except ConflitoVersaoEvento:
                 raise
             except Exception as erro:
-                detalhe = str(erro)
+                if isinstance(erro, APIError):
+                    status = getattr(erro, "status_code", "sem resposta")
+                    codigo = codigo_erro_groq(erro)
+                    detalhe = f"Falha na Groq ({status}{f', {codigo}' if codigo else ''})."
+                else:
+                    detalhe = str(erro)
                 for chave in (config.db_url, os.getenv("GROQ_API_KEY")):
                     if chave:
                         detalhe = detalhe.replace(chave, "[oculto]")
