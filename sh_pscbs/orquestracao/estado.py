@@ -141,6 +141,7 @@ class ResultadoValidacao(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id_proposta: str = Field(min_length=1)
+    hash_diff: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
     verificacoes: list[VerificacaoValidacao] = Field(default_factory=list)
 
     @property
