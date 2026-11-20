@@ -2,20 +2,9 @@
 
 from collections import Counter, defaultdict
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from pydantic import JsonValue
 
-from sh_pscbs.orquestracao.estado import EventoSchema, HipoteseRenomeacao, MudancaSchema
-
-
-class AnaliseSchema(BaseModel):
-    """Resultado entregue à etapa de análise de impacto."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    resumo: str
-    riscos: list[str] = Field(default_factory=list)
-    hipoteses_renomeacao: list[HipoteseRenomeacao] = Field(default_factory=list)
-    duvidas: list[str] = Field(default_factory=list)
+from sh_pscbs.orquestracao.estado import AnaliseSchema, EventoSchema, HipoteseRenomeacao, MudancaSchema
 
 
 def _tipo_coluna(metadados: dict[str, JsonValue]) -> str | None:

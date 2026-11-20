@@ -1,5 +1,6 @@
 """Persistência local dos eventos e do estado da correção."""
 
+import json
 import os
 import sqlite3
 import sys
@@ -7,7 +8,9 @@ from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
+from sh_pscbs.monitoramento.snapshot import comparar_schema_detalhado, identificar_schema, serializar_schema
 from sh_pscbs.orquestracao.estado import DecisaoHumana, EstadoCorrecao, EtapaCorrecao, EventoSchema
 
 
@@ -60,6 +63,14 @@ CREATE TABLE IF NOT EXISTS eventos (
 );
 CREATE INDEX IF NOT EXISTS eventos_projeto_criado_em
     ON eventos (projeto, criado_em, id_evento);
+CREATE TABLE IF NOT EXISTS schemas_observados (
+    projeto TEXT NOT NULL,
+    banco TEXT NOT NULL,
+    nome_schema TEXT NOT NULL,
+    versao TEXT NOT NULL,
+    schema_json TEXT NOT NULL,
+    PRIMARY KEY (projeto, banco, nome_schema)
+);
 CREATE TABLE IF NOT EXISTS transicoes (
     id_evento TEXT NOT NULL REFERENCES eventos (id_evento),
     versao INTEGER NOT NULL,
@@ -134,19 +145,53 @@ class RepositorioEventos:
                     raise ValueError("O ID já está associado a outro evento.")
                 return registro
 
-            agora = datetime.now(timezone.utc)
+            return self._inserir_evento(conexao, estado)
+
+    def _inserir_evento(self, conexao, estado: EstadoCorrecao) -> RegistroEvento:
+        evento = estado.evento
+        agora = datetime.now(timezone.utc)
+        conexao.execute(
+            """
+            INSERT INTO eventos (id_evento, projeto, etapa, estado_json, versao, criado_em, atualizado_em)
+                VALUES (?, ?, ?, ?, 1, ?, ?)
+            """,
+            (evento.id_evento, evento.projeto, estado.etapa_atual.value,
+             estado.model_dump_json(exclude_none=True, exclude_defaults=True), agora.isoformat(), agora.isoformat()),
+        )
+        self._registrar_transicao(conexao, estado, 1, agora)
+        return RegistroEvento(estado, 1, agora, agora)
+
+    def observar_schema(self, projeto: str, banco: str, nome_schema: str, schema: dict) -> RegistroEvento | None:
+        """Persiste o snapshot mais recente e o evento na mesma transação SQLite."""
+        versao = identificar_schema(schema)
+        escopo = projeto, banco, nome_schema
+        with closing(self._conectar()) as conexao, conexao:
+            conexao.execute("BEGIN IMMEDIATE")
+            anterior = conexao.execute(
+                "SELECT versao, schema_json FROM schemas_observados WHERE projeto=? AND banco=? AND nome_schema=?",
+                escopo,
+            ).fetchone()
+            if anterior is not None and anterior["versao"] == versao:
+                return None
             conexao.execute(
                 """
-                INSERT INTO eventos (
-                    id_evento, projeto, etapa, estado_json, versao, criado_em, atualizado_em
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO schemas_observados (projeto, banco, nome_schema, versao, schema_json)
+                    VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT (projeto, banco, nome_schema) DO UPDATE SET
+                    versao=excluded.versao, schema_json=excluded.schema_json
                 """,
-                (evento.id_evento, evento.projeto, estado.etapa_atual.value,
-                 estado.model_dump_json(exclude_none=True, exclude_defaults=True),
-                 1, agora.isoformat(), agora.isoformat()),
+                (*escopo, versao, serializar_schema(schema)),
             )
-            self._registrar_transicao(conexao, estado, 1, agora)
-            return RegistroEvento(estado, 1, agora, agora)
+            if anterior is None:
+                return None
+            mudancas = comparar_schema_detalhado(json.loads(anterior["schema_json"]), schema)
+            if not mudancas:
+                return None
+            evento = EventoSchema(
+                id_evento=uuid4().hex, projeto=projeto, banco=banco, nome_schema=nome_schema,
+                versao_snapshot_anterior=anterior["versao"], versao_snapshot_atual=versao, mudancas=mudancas,
+            )
+            return self._inserir_evento(conexao, EstadoCorrecao(evento=evento))
 
     def obter_evento(self, id_evento: str) -> RegistroEvento | None:
         with closing(self._conectar()) as conexao:
@@ -191,19 +236,29 @@ class RepositorioEventos:
             self._registrar_transicao(conexao, estado, versao, agora, motivo, decisao)
             return RegistroEvento(estado, versao, atual.criado_em, agora)
 
-    def listar_pendentes(self, *, projeto: str | None = None, limite: int = 100) -> list[RegistroEvento]:
+    def listar_pendentes(
+        self, *, projeto: str | None = None, banco: str | None = None, nome_schema: str | None = None,
+        etapas: tuple[EtapaCorrecao, ...] | None = None, limite: int = 100,
+    ) -> list[RegistroEvento]:
         """Lista eventos em aberto, incluindo os que aguardam decisão humana."""
         if limite < 1:
             raise ValueError("O limite precisa ser maior que zero.")
+        if etapas == ():
+            return []
+        excluidas = (EtapaCorrecao.APLICADO, EtapaCorrecao.REJEITADO, EtapaCorrecao.FALHOU, EtapaCorrecao.SEM_ALTERACOES)
+        filtro = etapas if etapas is not None else excluidas
+        operador = "IN" if etapas is not None else "NOT IN"
+        parametros = ",".join("?" for _ in filtro)
         with closing(self._conectar()) as conexao:
             linhas = conexao.execute(
-                """
+                f"""
                 SELECT * FROM eventos
-                WHERE etapa NOT IN (?, ?, ?) AND (? IS NULL OR projeto = ?)
+                WHERE etapa {operador} ({parametros}) AND (? IS NULL OR projeto = ?)
+                  AND (? IS NULL OR json_extract(estado_json, '$.evento.banco') = ?)
+                  AND (? IS NULL OR COALESCE(json_extract(estado_json, '$.evento.nome_schema'), 'public') = ?)
                 ORDER BY criado_em, id_evento LIMIT ?
                 """,
-                (EtapaCorrecao.APLICADO.value, EtapaCorrecao.REJEITADO.value,
-                 EtapaCorrecao.FALHOU.value, projeto, projeto, limite),
+                (*(etapa.value for etapa in filtro), projeto, projeto, banco, banco, nome_schema, nome_schema, limite),
             ).fetchall()
         return [self._registro(linha) for linha in linhas]
 

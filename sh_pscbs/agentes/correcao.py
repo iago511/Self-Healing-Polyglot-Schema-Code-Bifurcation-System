@@ -2,7 +2,6 @@
 
 import hashlib
 import json
-import shutil
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from uuid import uuid4
@@ -12,7 +11,7 @@ from langchain_core.language_models import BaseChatModel
 from sh_pscbs.eventos.repositorio import caminho_banco_eventos
 from sh_pscbs.modelos.llms import criar_modelo_codigo
 from sh_pscbs.orquestracao.estado import AcaoCorrecao, EventoSchema, PlanoCorrecao, PropostaCorrecao
-from tools.tools_alteracoes import _caminho, _hash_projeto, _ignorar_copia, _ignorar_nome, _propor_arquivo
+from tools.tools_alteracoes import _caminho, _hash_projeto, _ignorar_nome, _propor_arquivo, copiar_projeto_isolado
 
 
 def identificar_codigo_base(pasta_projeto: str | Path) -> str:
@@ -55,6 +54,7 @@ def gerar_proposta_correcao(
     codigo_base_id: str | None = None,
     pasta_propostas: str | Path | None = None,
     modelo: BaseChatModel | None = None,
+    ajustes: list[str] | None = None,
 ) -> PropostaCorrecao:
     """Gera o diff, o manifesto e a cópia completa que será validada depois.
 
@@ -83,7 +83,7 @@ def gerar_proposta_correcao(
     with TemporaryDirectory(dir=armazenamento, prefix=".gerando-") as temporario:
         rascunho = Path(temporario).resolve() / "proposta"
         copia = rascunho / "projeto"
-        shutil.copytree(original, copia, ignore=_ignorar_copia)
+        copiar_projeto_isolado(original, copia)
         if _hash_projeto(copia) != base_atual:
             raise ValueError("O código mudou durante a criação da cópia da proposta.")
         if modelo is None and any(acao.operacao != "excluir" for acao in acoes):
@@ -94,6 +94,7 @@ def gerar_proposta_correcao(
             contexto = {
                 "acao_atual": acoes_serializadas[indice],
                 "acoes_ordenadas": acoes_serializadas,
+                "ajustes_da_revisao_anterior": ajustes or [],
                 "trechos_das_alteracoes_anteriores": "".join(diffs[-3:])[-6000:],
             }
             orientacao = (

@@ -2,7 +2,11 @@ import json
 from unittest.mock import patch
 
 import pytest
+from groq import BadRequestError
+from httpx import Request, Response
 from langchain_groq import ChatGroq
+
+from sh_pscbs.agentes import planejamento
 from pydantic import ValidationError
 
 from sh_pscbs.agentes.planejamento import ResultadoPlanejamento, planejar_correcao
@@ -47,6 +51,30 @@ def _resultado_planejado(arquivo):
             "testes_previstos": ["Verificar a consulta de clientes."],
         },
     }
+
+
+def test_planejamento_usa_reserva_quando_groq_falha_ao_gerar_chamada(tmp_path, evento, monkeypatch):
+    (tmp_path / "clientes.sql").write_text("SELECT apelido FROM clientes;\n", encoding="utf-8")
+    principal = ChatGroq(model="openai/gpt-oss-120b", api_key="chave-de-teste")
+    reserva = ChatGroq(model="openai/gpt-oss-20b", api_key="chave-de-teste")
+    monkeypatch.setattr(planejamento, "criar_modelos_groq", lambda: (principal, reserva))
+    erro = BadRequestError(
+        "Resposta sem uma chamada válida",
+        response=Response(400, request=Request("POST", "https://api.groq.invalid")),
+        body={"error": {"code": "output_parse_failed"}},
+    )
+
+    with (
+        patch.object(principal.client, "create", side_effect=erro) as tentativa,
+        patch.object(reserva.client, "create", return_value=_chamada(
+            "ResultadoPlanejamento", _resultado_planejado("clientes.sql"),
+        )) as segunda,
+    ):
+        resultado = planejar_correcao(evento, analisar_schema(evento), RelatorioImpacto(), tmp_path)
+
+    assert resultado.status == "planejado"
+    tentativa.assert_called_once()
+    segunda.assert_called_once()
 
 
 def test_agente_investiga_com_tools_de_leitura_e_entrega_plano(tmp_path, evento):

@@ -261,6 +261,7 @@ def test_execucao_de_testes_usa_copia_filtrada_e_container_sem_rede(projeto, mon
     (copia / "outro.py").write_text("proposta_nao_aplicada = True\n", encoding="utf-8")
     manifesto = propor(original, copia)["manifesto"]
     comandos = []
+    monkeypatch.setenv("DOCKER_TEST_STORAGE", "bind")
     monkeypatch.setattr(fluxo.shutil, "which", lambda _: "docker")
 
     def executar_falso(comando, **opcoes):

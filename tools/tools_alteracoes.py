@@ -9,6 +9,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -310,6 +311,18 @@ def _ignorar_copia(diretorio, nomes):
     return ignorados
 
 
+def copiar_projeto_isolado(origem: str | Path, destino: str | Path) -> Path:
+    """Cria uma nova cópia sem Git, credenciais conhecidas, links ou caches."""
+    original = Path(origem).expanduser().resolve(strict=True)
+    copia = Path(destino).expanduser().resolve()
+    if not original.is_dir():
+        raise ValueError("A origem precisa ser uma pasta existente.")
+    if copia.is_relative_to(original) or original.is_relative_to(copia):
+        raise ValueError("O destino da cópia precisa estar separado do projeto original.")
+    shutil.copytree(original, copia, ignore=_ignorar_copia)
+    return copia
+
+
 def _hash_projeto(raiz, *, ignorar_arquivos=frozenset()):
     digest = hashlib.sha256()
     for diretorio, pastas, arquivos in os.walk(raiz, followlinks=False):
@@ -354,6 +367,41 @@ def _testar_em_container(original, candidato, dados, hash_base, imagem, timeout)
     return _executar_pytest_isolado(imagem, timeout, preparar)
 
 
+@contextmanager
+def _montagem_projeto_teste(projeto, imagem, nome):
+    armazenamento = os.getenv("DOCKER_TEST_STORAGE") or "bind"
+    if armazenamento not in {"bind", "volume"}:
+        raise ValueError("DOCKER_TEST_STORAGE deve ser bind ou volume.")
+    if armazenamento == "bind":
+        if "," in str(projeto):
+            raise ValueError("O caminho temporário contém vírgula e não pode ser montado.")
+        yield ["--mount", f"type=bind,src={projeto},dst=/workspace,readonly"]
+        return
+
+    staging = f"{nome}-copia"
+    try:
+        subprocess.run(
+            ["docker", "create", "--name", staging, "--pull", "never", "--network", "none",
+             "--mount", "type=volume,dst=/workspace,volume-nocopy", "--entrypoint", "python", imagem, "--version"],
+            capture_output=True, text=True, check=True, timeout=30,
+        )
+        subprocess.run(
+            ["docker", "cp", f"{projeto}{os.sep}.", f"{staging}:/workspace"],
+            capture_output=True, text=True, check=True, timeout=60,
+        )
+        yield ["--volumes-from", f"{staging}:ro"]
+    finally:
+        _limpar_container_teste(staging)
+
+
+def _limpar_container_teste(nome):
+    try:
+        subprocess.run(["docker", "rm", "-fv", nome], stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL, timeout=10, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
 def _executar_pytest_isolado(imagem, timeout, preparar_projeto):
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/@-]*", imagem):
         return {"status": "erro", "detalhe": "Nome de imagem Docker inválido."}
@@ -367,37 +415,34 @@ def _executar_pytest_isolado(imagem, timeout, preparar_projeto):
         with tempfile.TemporaryDirectory(prefix="sh_pscbs_testes_") as temporario:
             projeto = (Path(temporario) / "projeto").resolve()
             preparar_projeto(projeto)
-            if "," in str(projeto):
-                return {"status": "erro", "detalhe": "O caminho temporário contém vírgula e não pode ser montado."}
             nome = "sh-pscbs-test-" + uuid4().hex
-            comando = ["docker", "run", "--rm", "--name", nome, "--pull", "never", "--network", "none",
-                       "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
-                       "--pids-limit", "128", "--memory", "512m", "--cpus", "1", "--user", "65534:65534",
-                       "--tmpfs", "/tmp:rw,nosuid,size=128m", "--mount",
-                       f"type=bind,src={projeto},dst=/workspace,readonly", "--workdir", "/workspace",
-                       "--env", "HOME=/tmp", "--env", "TMPDIR=/tmp", "--env", "PYTHONDONTWRITEBYTECODE=1",
-                       "--env", "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1", imagem,
-                       "python", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
             log = Path(temporario) / "testes.log"
-            try:
-                with log.open("wb") as saida:
+            with _montagem_projeto_teste(projeto, imagem, nome) as montagem, log.open("wb") as saida:
+                comando = ["docker", "run", "--rm", "--name", nome, "--pull", "never", "--network", "none",
+                           "--read-only", "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+                           "--pids-limit", "128", "--memory", "512m", "--cpus", "1", "--user", "65534:65534",
+                           "--tmpfs", "/tmp:rw,nosuid,size=128m", *montagem, "--workdir", "/workspace",
+                           "--env", "HOME=/tmp", "--env", "TMPDIR=/tmp", "--env", "PYTHONDONTWRITEBYTECODE=1",
+                           "--env", "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1", "--entrypoint", "python", imagem,
+                           "-m", "pytest", "-q", "-p", "no:cacheprovider"]
+                try:
                     resultado = subprocess.run(comando, stdin=subprocess.DEVNULL, stdout=saida,
                                                stderr=subprocess.STDOUT, timeout=timeout, check=False)
-            except subprocess.TimeoutExpired:
-                try:
-                    subprocess.run(["docker", "kill", nome], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                   timeout=10, check=False)
-                except (OSError, subprocess.TimeoutExpired):
-                    pass
-                return {"status": "erro", "detalhe": "Os testes excederam o tempo limite."}
+                except subprocess.TimeoutExpired:
+                    _limpar_container_teste(nome)
+                    return {"status": "erro", "detalhe": "Os testes excederam o tempo limite."}
             with log.open("rb") as saida:
                 saida.seek(0, os.SEEK_END)
                 saida.seek(max(0, saida.tell() - 12000))
                 texto = saida.read().decode("utf-8", errors="replace")
+            if resultado.returncode in (125, 126, 127):
+                return {"status": "nao_executados", "detalhe": "O Docker não conseguiu iniciar os testes.", "saida": texto}
             if resultado.returncode == 5:
                 return {"status": "nao_executados", "detalhe": "O pytest não coletou testes.", "saida": texto}
             return {"status": "aprovados" if resultado.returncode == 0 else "falharam",
                     "codigo_saida": resultado.returncode, "saida": texto}
+    except subprocess.CalledProcessError as exc:
+        return {"status": "nao_executados", "detalhe": "O Docker não conseguiu preparar a cópia.", "saida": (exc.stderr or "")[-12000:]}
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         return {"status": "erro", "detalhe": str(exc)}
 

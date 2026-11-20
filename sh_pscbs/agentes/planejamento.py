@@ -156,6 +156,7 @@ def planejar_correcao(
     pasta: str | Path,
     *,
     modelo: BaseChatModel | None = None,
+    esclarecimentos: list[str] | None = None,
 ) -> ResultadoPlanejamento:
     """Investiga os arquivos do projeto e devolve uma decisão validada."""
     raiz = Path(pasta).expanduser().resolve(strict=True)
@@ -178,6 +179,7 @@ def planejar_correcao(
         "evento": evento.model_dump(mode="json"),
         "analise_schema": analise_schema.model_dump(mode="json"),
         "relatorio_impacto": _preparar_relatorio(relatorio_impacto, raiz),
+        "esclarecimentos_do_responsavel": esclarecimentos or [],
     }
     resposta = agente.invoke(
         {"messages": [{"role": "user", "content": json.dumps(contexto, ensure_ascii=False)}]},

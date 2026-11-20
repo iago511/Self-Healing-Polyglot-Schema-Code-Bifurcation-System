@@ -7,7 +7,7 @@ from langchain.tools import tool
 from pydantic import BaseModel, Field
 from sh_pscbs.monitoramento.snapshot import verificar_mudancas
 from sh_pscbs.monitoramento.watcher import pasta_projeto
-from tools.tools_alteracoes import TOOLS_ALTERACOES, configurar_modelo_codigo
+from tools.tools_alteracoes import TOOLS_ALTERACOES, configurar_modelo_codigo, copiar_projeto_isolado
 
 _llm = None
 
@@ -519,20 +519,9 @@ def criar_copia_projeto_inteiro(origem: str, destino: str) -> str:
     Cria uma cópia de todo o projeto para um novo local.
     """
     try:
-        if not os.path.exists(origem):
-            return f"Erro: A pasta de origem '{origem}' não existe."
-
-        if not os.path.isdir(origem):
-            return f"Erro: '{origem}' não é uma pasta."
-
-        if os.path.exists(destino):
-            return f"Erro: O destino '{destino}' já existe."
-
-        shutil.copytree(origem, destino)
-
-        return f"Cópia do projeto criada em {destino}"
-
-    except Exception as e:
+        caminho = copiar_projeto_isolado(origem, destino)
+        return f"Cópia do projeto criada em {caminho}"
+    except (OSError, ValueError) as e:
         return f"Erro ao criar cópia do projeto: {str(e)}"
 
 #ler arquivo

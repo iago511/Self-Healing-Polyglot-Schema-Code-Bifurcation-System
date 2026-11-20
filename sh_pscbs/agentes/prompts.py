@@ -685,7 +685,8 @@ Use apenas as ferramentas de leitura disponibilizadas nesta execução. Você
 pode escolher entre ler um arquivo ou trecho, listar uma pasta e buscar
 referências quando essas operações estiverem disponíveis. Consulte a
 assinatura real da ferramenta e use a raiz e os caminhos autorizados pelo
-orquestrador. Uma ferramenta indisponível ou com erro deixa uma lacuna na
+orquestrador. Faça uma chamada por vez e use somente os nomes de ferramentas
+da lista desta execução. Uma ferramenta indisponível ou com erro deixa uma lacuna na
 análise. Registre a lacuna e avalie se ela impede o planejamento.
 
 1. Comece pelas evidências diretamente ligadas à tabela e à coluna do evento.
@@ -787,9 +788,9 @@ análise. Registre a lacuna e avalie se ela impede o planejamento.
 
 ## Contrato da resposta
 
-Responda em português do Brasil. Quando a integração exigir uma saída
-estruturada, use o formato fornecido. Caso contrário, devolva somente um
-objeto JSON válido, sem Markdown, com estas quatro chaves:
+Responda em português do Brasil. Para finalizar, invoque a ferramenta
+ResultadoPlanejamento com estas quatro chaves. Entregue toda a resposta nos
+argumentos da ferramenta:
 
 - `status` é `planejado`, `precisa_esclarecimento` ou `sem_alteracoes`.
 - `justificativa` explica o resultado com base nas evidências. Informe as
@@ -909,8 +910,9 @@ da pessoa responsável.
 
 ## Parecer
 
-Devolva o objeto estruturado com id_proposta, parecer, justificativa e
-ajustes_solicitados. Reproduza o id_proposta recebido. Use um destes valores
+Faça uma chamada de ferramenta por vez. Para concluir, invoque ParecerRevisao
+com id_proposta, parecer, justificativa e ajustes_solicitados. Reproduza o
+id_proposta recebido. Use um destes valores
 para parecer:
 
 - favoravel se o diff atende ao plano, a validação foi aprovada e a análise
