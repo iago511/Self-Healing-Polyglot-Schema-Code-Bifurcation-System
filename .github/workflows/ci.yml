@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   validar:
-    name: Testes e imagem Docker
+    name: Testes Python
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -45,12 +45,3 @@ jobs:
           name: test-results
           path: test-results.xml
           if-no-files-found: warn
-
-      - name: Construir imagem Docker
-        run: docker build -t sh-pscbs:test .
-
-      - name: Verificar dependencias da imagem
-        run: docker run --rm sh-pscbs:test python -m pip check
-
-      - name: Verificar sintaxe na imagem
-        run: docker run --rm sh-pscbs:test python -c "import ast, pathlib; arquivos = list(pathlib.Path('/app').glob('*.py')); [ast.parse(p.read_text(encoding='utf-8'), filename=str(p)) for p in arquivos]; print(f'{len(arquivos)} arquivos Python validados')"

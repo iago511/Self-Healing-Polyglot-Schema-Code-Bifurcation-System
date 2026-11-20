@@ -1,38 +1,33 @@
-from prompts import ORQUESTRADOR_ARQUIVOS_PROMPT
-from tools import TOOLS, set_llm
-import os
 import threading
+from pathlib import Path
+
 from dotenv import load_dotenv
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_ollama import ChatOllama
 from langchain.agents import create_agent
 
-load_dotenv()
-
-llm_gemini = ChatGoogleGenerativeAI(
-    model="gemini-3.5-flash-lite",
-    temperature=0.7,
-    top_p=0.95,
-    api_key=os.getenv("GEMINI_API_KEY"),
+from sh_pscbs.agentes.prompts import ORQUESTRADOR_ARQUIVOS_PROMPT
+from sh_pscbs.modelos.llms import (
+    criar_modelo_codigo,
+    criar_modelos_groq,
+    fallback_do_agente,
 )
-
-llm_codigo = ChatOllama(
-    model="qwen2.5-coder:3b",
-    temperature=0,
-)
-
-set_llm(llm_codigo) 
-
-orquestrador_app = create_agent(
-    model=llm_gemini,            
-    tools=TOOLS,
-    system_prompt=ORQUESTRADOR_ARQUIVOS_PROMPT,
-)
+from sh_pscbs.monitoramento.watcher import rodar_watcher
+from tools.tools import TOOLS, set_llm
 
 
-def invocar_agente(mensagem: str, thread_id: str = "session_id"):
+def criar_orquestrador():
+    especialista, rapido = criar_modelos_groq()
+    set_llm(criar_modelo_codigo())
+    return create_agent(
+        model=especialista,
+        tools=TOOLS,
+        system_prompt=ORQUESTRADOR_ARQUIVOS_PROMPT,
+        middleware=[fallback_do_agente(rapido)],
+    )
+
+
+def invocar_agente(orquestrador, mensagem: str, thread_id: str = "session_id"):
     try:
-        resposta = orquestrador_app.invoke(
+        resposta = orquestrador.invoke(
             {"messages": [{"role": "human", "content": mensagem}]},
             config={"configurable": {"thread_id": thread_id}},
         )
@@ -50,18 +45,29 @@ def invocar_agente(mensagem: str, thread_id: str = "session_id"):
         print(f"Erro ao consumir a API: {e}")
     return ""
 
-def iniciar_watcher():
-    from watcher import rodar_watcher
-    rodar_watcher(invocar_agente)
 
-thread_watcher = threading.Thread(target=iniciar_watcher, daemon=True)
-thread_watcher.start()
+def main():
+    load_dotenv(Path(__file__).resolve().with_name(".env"))
+    try:
+        orquestrador = criar_orquestrador()
+    except ValueError as erro:
+        raise SystemExit(str(erro)) from None
 
-while True:
-    user_input = input("> ")
+    def conversar(mensagem, thread_id="session_id"):
+        return invocar_agente(orquestrador, mensagem, thread_id)
 
-    if user_input.lower() in ("sair", "end", "fim", "tchau", "bye"):
-        print("Encerrando a conversa...")
-        break
+    threading.Thread(target=rodar_watcher, args=(conversar,), daemon=True).start()
+    try:
+        while True:
+            mensagem = input("> ").strip()
+            if mensagem.lower() in ("sair", "end", "fim", "tchau", "bye"):
+                break
+            if mensagem:
+                conversar(mensagem)
+    except (EOFError, KeyboardInterrupt):
+        pass
+    print("Encerrando a conversa...")
 
-    invocar_agente(user_input)
+
+if __name__ == "__main__":
+    main()

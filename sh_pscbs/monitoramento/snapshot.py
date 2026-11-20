@@ -2,9 +2,10 @@ import json
 import os
 import psycopg2
 from datetime import datetime, timezone
+from pathlib import Path
 
 
-SNAPSHOTS_DIR = "schema_snapshots"
+SNAPSHOTS_DIR = Path(__file__).resolve().parents[2] / "schema_snapshots"
 
 
 def ler_schema(url):

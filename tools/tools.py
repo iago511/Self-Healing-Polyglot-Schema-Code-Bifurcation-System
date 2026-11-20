@@ -1,22 +1,20 @@
 import os
 import shutil
 from datetime import datetime
-from dotenv import load_dotenv
 import psycopg2
-from google import genai
-from google.genai import types
-import re
 from typing import Optional
 from langchain.tools import tool
 from pydantic import BaseModel, Field
-from snapshot import verificar_mudancas
-from watcher import PASTA
+from sh_pscbs.monitoramento.snapshot import verificar_mudancas
+from sh_pscbs.monitoramento.watcher import pasta_projeto
+from tools.tools_alteracoes import TOOLS_ALTERACOES, configurar_modelo_codigo
 
 _llm = None
 
 def set_llm(llm):
     global _llm
     _llm = llm
+    configurar_modelo_codigo(llm)
 
 
 class VerificarMudancasSchema(BaseModel):
@@ -500,7 +498,7 @@ def reescrever_arquivo_afetado(arquivo: str, diff: str, tabela: str) -> str:
             linhas = [l for l in codigo_novo.splitlines() if not l.startswith("```")]
             codigo_novo = "\n".join(linhas).strip()
             
-        backup_dir = os.path.join(PASTA, "backups")
+        backup_dir = os.path.join(pasta_projeto() or os.path.dirname(os.path.abspath(arquivo)), "backups")
         os.makedirs(backup_dir, exist_ok=True)
         nome_backup = os.path.basename(arquivo) + f".bak_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         backup_path = os.path.join(backup_dir, nome_backup)
@@ -515,7 +513,40 @@ def reescrever_arquivo_afetado(arquivo: str, diff: str, tabela: str) -> str:
     except Exception as e:
         print(f"\n[ERRO] reescrever_arquivo_afetado:\n{traceback.format_exc()}")
         return f"Erro ao reescrever {arquivo}: {str(e)}"
-    
+
+def criar_copia_projeto_inteiro(origem: str, destino: str) -> str:
+    """
+    Cria uma cópia de todo o projeto para um novo local.
+    """
+    try:
+        if not os.path.exists(origem):
+            return f"Erro: A pasta de origem '{origem}' não existe."
+
+        if not os.path.isdir(origem):
+            return f"Erro: '{origem}' não é uma pasta."
+
+        if os.path.exists(destino):
+            return f"Erro: O destino '{destino}' já existe."
+
+        shutil.copytree(origem, destino)
+
+        return f"Cópia do projeto criada em {destino}"
+
+    except Exception as e:
+        return f"Erro ao criar cópia do projeto: {str(e)}"
+
+#ler arquivo
+def ler_arquivo(caminho: str) -> str:
+    """
+    Lê o conteúdo de um arquivo e retorna como string.
+    """
+    try:
+        with open(caminho, "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception as e:
+        return f"Erro ao ler o arquivo '{caminho}': {e}"
+
+
 TOOLS = [
     search_folder_on_computer,
     get_tree_folder,
@@ -529,5 +560,7 @@ TOOLS = [
     verificar_mudancas_schema,
     buscar_arquivos_afetados,
     reescrever_arquivo_afetado,
-    show_schema_database
-]
+    criar_copia_projeto_inteiro,
+    show_schema_database,
+    ler_arquivo
+] + TOOLS_ALTERACOES

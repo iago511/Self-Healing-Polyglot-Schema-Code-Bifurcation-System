@@ -10,9 +10,9 @@ Quando você remove uma coluna, ele acha todos os arquivos que usam ela e reescr
 
 Você vai precisar de:
 
-- Python 3.10 ou superior
+- Python 3.11 ou superior
 - Ollama instalado na máquina
-- Uma chave da API do Gemini (gratuita)
+- Uma chave da API da Groq
 - Um banco PostgreSQL rodando (local ou remoto)
 
 ---
@@ -22,7 +22,7 @@ Você vai precisar de:
 ```bash
 git clone <url-do-repositorio>
 cd sh
-pip install langchain langchain-google-genai langchain-ollama langgraph psycopg2-binary python-dotenv
+python -m pip install -r requirements.txt
 ```
 
 Se você usa `venv` (recomendado):
@@ -31,7 +31,7 @@ Se você usa `venv` (recomendado):
 python -m venv .venv
 .venv\Scripts\activate        # Windows
 source .venv/bin/activate     # Linux/Mac
-pip install langchain langchain-google-genai langchain-ollama langgraph psycopg2-binary python-dotenv
+python -m pip install -r requirements.txt
 ```
 
 ---
@@ -63,11 +63,9 @@ Se retornar código, está pronto. Saia com `/bye`.
 
 ---
 
-## 3. Pegar a chave do Gemini
+## 3. Pegar a chave da Groq
 
-Acesse: https://aistudio.google.com/app/apikey
-
-Clique em "Create API key", copie a chave gerada. É gratuita.
+Crie uma chave no [console da Groq](https://console.groq.com/keys).
 
 ---
 
@@ -76,15 +74,14 @@ Clique em "Create API key", copie a chave gerada. É gratuita.
 Crie um arquivo chamado `.env` dentro da pasta `sh`:
 
 ```
-GEMINI_API_KEY=sua_chave_aqui
+GROQ_API_KEY=sua_chave_aqui
 DB_URL=postgresql://usuario:senha@host:5432/nome_do_banco
-PASTA=C:\caminho\completo\do\seu\projeto
-INTERVALO=5
+PROJECT_PATH=C:\caminho\completo\do\seu\projeto
 ```
 
 - `DB_URL` é a URL de conexão com o seu banco PostgreSQL
-- `PASTA` é o caminho da pasta com os arquivos que o sistema vai monitorar e reescrever
-- `INTERVALO` é quantos segundos entre cada verificação do banco (mínimo 5)
+- `PROJECT_PATH` é o caminho da pasta com os arquivos que o sistema vai analisar.
+- Preencha `OLLAMA_BASE_URL` se o Ollama estiver em um endereço diferente do padrão local.
 
 Para banco com SSL (ex: Aiven, Supabase, Railway):
 
@@ -127,10 +124,15 @@ Antes de qualquer reescrita, o arquivo original é salvo em `sua-pasta/backups/`
 ```
 sh/
   main.py        - inicializa o agente e o watcher
-  watcher.py     - monitora o banco e monta as mensagens pro agente
-  snapshot.py    - salva e compara schemas
-  tools.py       - ferramentas que o agente pode usar
-  prompts.py     - instruções do agente
+  sh_pscbs/
+    monitoramento/  - watcher e snapshots do PostgreSQL
+    modelos/        - configuração da Groq e do Ollama
+    agentes/        - instruções do agente e arquivos para os agentes futuros
+    orquestracao/   - arquivos para o grafo e o estado
+    eventos/        - arquivo para persistência de eventos
+    validacao/      - arquivo para o executor de validação
+  tools/            - ferramentas que o agente pode usar
+  docs/             - documentação do projeto
   .env           - suas configurações (não commitar)
   schema_snapshots/  - histórico de schemas salvos
 ```

@@ -2,6 +2,8 @@
 
 **Self-Healing Polyglot Schema-Code Bifurcation System**
 
+Veja o [guia de uso](docs/TUTORIAL_USO_LEIA.MD) e a [proposta de arquitetura multiagente](docs/ARQUITETURA_MULTIAGENTE.md).
+
 ---
 
 ## O problema
@@ -30,7 +32,7 @@ O sistema roda em três camadas:
 Conecta ao banco PostgreSQL e salva um snapshot do schema atual em JSON. A cada intervalo configurado, compara o schema atual com o snapshot anterior. Se detectar diferença, classifica o que mudou: colunas removidas, colunas adicionadas, tabelas novas.
 
 **Orquestrador**
-Um agente LLM (Google Gemini) que recebe o diff do watcher e decide o que fazer: quais arquivos buscar, qual ferramenta chamar, em que ordem executar as operações.
+Um agente usa o GPT-OSS 120B pela Groq para interpretar o diff e escolher as ferramentas. Em caso de falha transitória, pode consultar o GPT-OSS 20B.
 
 **Motor de reescrita**
 Um modelo especializado em código (Qwen 2.5 Coder, rodando localmente via Ollama) que recebe o arquivo original e o diff e reescreve o código refletindo as mudanças do banco.
@@ -63,7 +65,7 @@ banco de dados
       |
    watcher          <- detecta mudanças no schema
       |
-  orquestrador      <- agente Gemini decide o que fazer
+  orquestrador      <- agente GPT-OSS na Groq decide o que fazer
       |
   ferramentas       <- busca arquivos, lê estrutura, chama reescrita
       |
@@ -77,7 +79,7 @@ motor de reescrita  <- Qwen 2.5 Coder (local, via Ollama)
 ## Stack
 
 - **LangChain + LangGraph** — orquestração do agente
-- **Google Gemini** — modelo de linguagem para raciocínio e tomada de decisão
+- **Groq com GPT-OSS** — modelos de raciocínio e orquestração
 - **Qwen 2.5 Coder via Ollama** — modelo especializado em código, roda localmente
 - **PostgreSQL** — banco de dados monitorado
 - **Python** — runtime do sistema

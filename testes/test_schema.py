@@ -2,9 +2,8 @@ import json
 
 from unittest.mock import MagicMock, patch
 
-import snapshot
-
-from watcher import extrair_mudancas
+from sh_pscbs.monitoramento import snapshot
+from sh_pscbs.monitoramento.watcher import extrair_mudancas
 
 def test_diff_detecta_tabelas_e_colunas():
 
