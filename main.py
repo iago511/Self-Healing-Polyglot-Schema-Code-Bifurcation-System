@@ -1,3 +1,4 @@
+import argparse
 import threading
 from pathlib import Path
 
@@ -46,7 +47,11 @@ def invocar_agente(orquestrador, mensagem: str, thread_id: str = "session_id"):
     return ""
 
 
-def main():
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Monitora mudanças no schema PostgreSQL.")
+    parser.add_argument("--watch-only", action="store_true", help="Executa o monitor sem abrir o terminal.")
+    argumentos = parser.parse_args(argv)
+
     load_dotenv(Path(__file__).resolve().with_name(".env"))
     try:
         orquestrador = criar_orquestrador()
@@ -55,6 +60,13 @@ def main():
 
     def conversar(mensagem, thread_id="session_id"):
         return invocar_agente(orquestrador, mensagem, thread_id)
+
+    if argumentos.watch_only:
+        try:
+            rodar_watcher(conversar)
+        except KeyboardInterrupt:
+            pass
+        return
 
     threading.Thread(target=rodar_watcher, args=(conversar,), daemon=True).start()
     try:
