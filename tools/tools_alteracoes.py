@@ -210,6 +210,31 @@ def propor_alteracao(pasta_original: str, pasta_copia: str, arquivo_relativo: st
     A cópia deve existir fora do projeto original. Trata um arquivo por vez e
     pode alterar, criar ou propor sua exclusão. Não aplica no original.
     """
+    return _propor_arquivo(pasta_original, pasta_copia, arquivo_relativo, diff_schema, tabela, excluir)
+
+
+def _diff_arquivo(arquivo, antes, depois):
+    def linhas(conteudo):
+        if not conteudo:
+            return []
+        *terminadas, ultima = conteudo.split("\n")
+        return [linha + "\n" for linha in terminadas] + ([ultima] if ultima else [])
+
+    origem = "/dev/null" if antes is None else f"a/{arquivo}\t"
+    destino = "/dev/null" if depois is None else f"b/{arquivo}\t"
+    diff = difflib.unified_diff(linhas(antes), linhas(depois), fromfile=origem, tofile=destino)
+    linhas_diff = list(diff)
+    if not linhas_diff and (antes is None or depois is None):
+        modo = "new" if antes is None else "deleted"
+        return f"diff --git a/{arquivo} b/{arquivo}\n{modo} file mode 100644\n"
+    return "".join(
+        linha if linha.endswith("\n") else linha + "\n\\ No newline at end of file\n"
+        for linha in linhas_diff
+    )
+
+
+def _propor_arquivo(pasta_original, pasta_copia, arquivo_relativo, diff_schema, tabela, excluir=False,
+                    *, modelo=None, orientacao="", registrar_manifesto=True):
     try:
         original, copia = _raizes(pasta_original, pasta_copia)
         arquivo_original = _caminho(original, arquivo_relativo)
@@ -221,40 +246,50 @@ def propor_alteracao(pasta_original: str, pasta_copia: str, arquivo_relativo: st
         if excluir:
             if antes is None:
                 raise ValueError("Não é possível propor a exclusão de um arquivo inexistente.")
-            codigo_novo, depois = "", None
+            codigo_novo, depois = None, None
         else:
-            if _modelo_codigo is None:
+            modelo = _modelo_codigo if modelo is None else modelo
+            if modelo is None:
                 raise ValueError("O modelo de código ainda não foi configurado.")
             prompt = (f"Atualize o arquivo {arquivo_relativo!r} para a mudança no PostgreSQL.\n"
                       f"Tabela: {tabela}\nDiff do schema:\n{diff_schema}\n\n"
                       "Preserve a lógica não relacionada. Se o arquivo não for relacionado, retorne-o sem mudanças. "
                       "Não invente regras de negócio. Retorne somente o código completo, sem explicações.\n\n"
+                      f"{orientacao}"
                       f"Código atual:\n{codigo_atual}")
-            codigo_novo = _conteudo_modelo(_modelo_codigo.invoke(prompt))
+            codigo_novo = _conteudo_modelo(modelo.invoke(prompt)).replace("\r\n", "\n")
+            codigo_normalizado = codigo_atual.replace("\r\n", "\n")
+            if antes is not None and codigo_novo.rstrip("\n") == codigo_normalizado.rstrip("\n"):
+                codigo_novo = codigo_atual
+            elif "\r\n" in codigo_atual and "\n" not in codigo_atual.replace("\r\n", ""):
+                codigo_novo = codigo_novo.replace("\n", "\r\n")
             depois = codigo_novo.encode("utf-8")
         if _ler_bytes(arquivo_original) != antes or _ler_bytes(arquivo_copia) != antes:
             raise ValueError("O arquivo original ou a cópia mudou durante a geração da proposta.")
         if depois == antes:
             return {"sucesso": True, "status": "sem_alteracoes", "diff": ""}
-        proposta_id = uuid4().hex
-        pasta_proposta = _pasta_propostas(copia) / proposta_id
-        manifesto = pasta_proposta / "manifesto.json"
-        dados = {"versao": 1, "id": proposta_id, "pasta_original": str(original), "pasta_copia": str(copia),
-                 "arquivo": Path(arquivo_relativo).as_posix(), "hash_original": _hash(antes),
-                 "hash_proposta": _hash(depois), "operacao": "excluir" if excluir else "criar" if antes is None else "alterar",
-                 "estado": "pendente", "validacao": None, "criada_em": datetime.now(timezone.utc).isoformat()}
-        pasta_proposta.mkdir(parents=True, exist_ok=False)
+        arquivo = Path(arquivo_relativo).as_posix()
+        diff = _diff_arquivo(arquivo, codigo_atual if antes is not None else None, codigo_novo)
+        manifesto = None
+        if registrar_manifesto:
+            proposta_id = uuid4().hex
+            pasta_proposta = _pasta_propostas(copia) / proposta_id
+            manifesto = pasta_proposta / "manifesto.json"
+            dados = {"versao": 1, "id": proposta_id, "pasta_original": str(original), "pasta_copia": str(copia),
+                     "arquivo": arquivo, "hash_original": _hash(antes), "hash_proposta": _hash(depois),
+                     "operacao": "excluir" if excluir else "criar" if antes is None else "alterar",
+                     "estado": "pendente", "validacao": None, "criada_em": datetime.now(timezone.utc).isoformat()}
+            pasta_proposta.mkdir(parents=True, exist_ok=False)
         modo = stat.S_IMODE(arquivo_copia.stat().st_mode) if arquivo_copia.exists() else None
         if excluir:
             arquivo_copia.unlink()
         else:
             _escrever_atomico(arquivo_copia, depois, modo)
-        _salvar_manifesto(manifesto, dados)
-        nome_anterior = "/dev/null" if antes is None else f"a/{dados['arquivo']}"
-        nome_novo = "/dev/null" if depois is None else f"b/{dados['arquivo']}"
-        diff = "".join(difflib.unified_diff(codigo_atual.splitlines(keepends=True), codigo_novo.splitlines(keepends=True),
-                                            fromfile=nome_anterior, tofile=nome_novo))
-        return {"sucesso": True, "status": "pendente", "manifesto": str(manifesto), "diff": diff}
+        resultado = {"sucesso": True, "status": "pendente", "diff": diff}
+        if manifesto is not None:
+            _salvar_manifesto(manifesto, dados)
+            resultado["manifesto"] = str(manifesto)
+        return resultado
     except (OSError, ValueError, UnicodeError) as exc:
         return _erro(exc)
     except Exception as exc:
@@ -265,7 +300,12 @@ def _ignorar_copia(diretorio, nomes):
     ignorados = set()
     for nome in nomes:
         caminho = Path(diretorio) / nome
-        if _ignorar_nome(nome) or caminho.is_symlink():
+        if _ignorar_nome(nome):
+            ignorados.add(nome)
+            continue
+        info = caminho.lstat()
+        junction = getattr(info, "st_reparse_tag", None) == getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", 0xA0000003)
+        if junction or not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):
             ignorados.add(nome)
     return ignorados
 
