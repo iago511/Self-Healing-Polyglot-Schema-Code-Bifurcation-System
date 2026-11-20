@@ -16,6 +16,6 @@ COPY tools/ ./tools/
 
 USER agent
 
-ENV PROJECT_PATH=/workspace SNAPSHOTS_DIR=/data/schema_snapshots
+ENV PROJECT_PATH=/workspace SNAPSHOTS_DIR=/data/schema_snapshots EVENTOS_DB_PATH=/data/eventos.db
 
 CMD ["python", "main.py", "--watch-only"]
