@@ -8,10 +8,10 @@
 
 ## Quick start
 
-Use Git and Docker Compose to clone the branch with the integrated workflow and run the demo.
+You need Git and Docker Compose. Clone the repository and run the demo:
 
 ```sh
-git clone --branch feat/validacao-e-revisao https://github.com/iago511/Self-Healing-Polyglot-Schema-Code-Bifurcation-System.git sh-pscbs
+git clone https://github.com/iago511/Self-Healing-Polyglot-Schema-Code-Bifurcation-System.git sh-pscbs
 cd sh-pscbs
 docker compose -f compose.demo.yaml up --build --exit-code-from demo --attach demo
 ```
@@ -21,6 +21,14 @@ The demo renames a PostgreSQL column, prints the generated SQL diff, runs pytest
 ```sh
 docker compose -f compose.demo.yaml down
 ```
+
+## What happens after a schema change?
+
+1. The monitor compares PostgreSQL schema snapshots and records an event in SQLite.
+2. Schema and impact analysis identify affected code; the planner proposes a correction.
+3. The correction agent edits an isolated copy. The executor checks syntax and runs pytest in Docker.
+4. A reviewer examines the proposal. Passing tests and a favorable review allow human approval.
+5. Approval creates a commit on a separate branch. Publishing requires an explicit command.
 
 ## Monitor your own project
 
@@ -35,3 +43,19 @@ python main.py monitor --uma-vez
 The first run records a baseline. Run `python main.py monitor` to keep watching for changes. Events and decisions are stored in SQLite. The current validation runner uses pytest.
 
 See the [usage guide](docs/usage.md) for Docker deployment, review, and publishing, and the [architecture overview](docs/architecture.md) for the full workflow.
+
+## Current scope and limitations
+
+This is an experimental developer tool focused on PostgreSQL and Python projects. The CLI currently uses Portuguese command names. Other languages require further validation and tooling.
+
+Schema polling can miss a change reverted between polls. Column renames are inferred and may need clarification. Generated fixes depend on your project's tests and require review. Groq receives relevant context and code excerpts for planning and review; code generation runs through Ollama. The demo simulates model responses and does not measure live-model reliability.
+
+## Contribute
+
+Try the demo, report a reproducible problem, or improve the documentation. Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup and pull request guidance. Small contributions are welcome.
+
+If this project helps you, consider starring it and sharing a concrete use case. Feedback about schema changes that broke real applications is especially useful.
+
+## License
+
+[MIT](LICENSE).
