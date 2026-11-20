@@ -97,7 +97,7 @@ class GitProjeto:
                 raise ValueError("A branch da proposta já existe com conteúdo diferente.")
             return CommitProposta(branch, commit)
 
-        commit = self._texto("commit-tree", arvore, "-p", base, "-m", f"fix: aplicar proposta SH-PSCBS {id_proposta}")
+        commit = self._texto("commit-tree", arvore, "-p", base, "-m", f"fix: apply SH-PSCBS proposal {id_proposta}")
         self._git("update-ref", ref, commit, "0" * len(base))
         return CommitProposta(branch, commit)
 

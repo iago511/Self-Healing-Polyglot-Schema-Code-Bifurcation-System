@@ -1,0 +1,35 @@
+name: sh-pscbs-demo
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: demo
+      POSTGRES_PASSWORD: demo
+      POSTGRES_DB: demo
+      PGDATA: /var/lib/postgresql/data/pgdata
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "demo", "-d", "demo"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    networks: [demo]
+
+  demo:
+    build:
+      context: .
+      target: demo
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SH_DEMO_MODE: "1"
+      SH_TEST_POSTGRES_DSN: postgresql://demo:demo@postgres:5432/demo
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+    networks: [demo]
+
+networks:
+  demo:
+    internal: true

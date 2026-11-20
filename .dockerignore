@@ -12,5 +12,6 @@
 schema_snapshots
 backups
 docs
-testes
+testes/*
+!testes/test_integracao_grafo.py
 test-results.xml

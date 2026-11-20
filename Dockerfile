@@ -33,4 +33,9 @@ COPY requirements-dev.txt .
 RUN pip install --no-cache-dir -r requirements-dev.txt
 USER agent
 
+FROM test AS demo
+COPY testes/test_integracao_grafo.py ./testes/
+ENTRYPOINT ["python", "-m", "pytest", "-q", "-p", "no:cacheprovider", "testes/test_integracao_grafo.py"]
+CMD []
+
 FROM runtime AS production

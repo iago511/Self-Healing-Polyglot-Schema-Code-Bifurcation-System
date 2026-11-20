@@ -2,6 +2,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
@@ -24,6 +25,8 @@ from sh_pscbs.validacao import executor
 @pytest.fixture
 def banco(monkeypatch):
     dsn = os.getenv("SH_TEST_POSTGRES_DSN")
+    if os.getenv("SH_DEMO_MODE") == "1" and not dsn:
+        pytest.fail("The demo requires its disposable PostgreSQL service.")
     if not dsn:
         schema = {"clientes": {"apelido": {"tipo": "text"}}}
         for modulo in (main, watcher):
@@ -61,6 +64,13 @@ def _chamada(nome, argumentos, numero):
 
 
 def test_monitor_ate_publicacao_git(tmp_path, monkeypatch, banco, capsys):
+    demo = os.getenv("SH_DEMO_MODE") == "1"
+
+    def show_demo(*lines):
+        if demo:
+            with capsys.disabled():
+                print(*lines, sep="\n", flush=True)
+
     if not shutil.which("git"):
         pytest.skip("Git não instalado.")
     projeto = tmp_path / "origem"
@@ -129,6 +139,9 @@ def test_monitor_ate_publicacao_git(tmp_path, monkeypatch, banco, capsys):
         repo = RepositorioEventos(eventos)
         assert repo.listar_pendentes() == []
         banco()
+        show_demo("SH-PSCBS / WORKFLOW DEMO", "Model responses are simulated.", "",
+                  "01  PostgreSQL schema change",
+                  "ALTER TABLE clientes RENAME COLUMN apelido TO nome;")
         assert main.main(["monitor", "--uma-vez"]) == 0
         registro, = repo.listar_pendentes()
         estado = registro.estado
@@ -137,15 +150,27 @@ def test_monitor_ate_publicacao_git(tmp_path, monkeypatch, banco, capsys):
         id_evento, id_proposta = estado.evento.id_evento, estado.proposta.id_proposta
         aprovar = ["aprovar", id_evento, "--proposta", id_proposta, "--autor", "operador"]
         assert main.main(aprovar) == 1
+        show_demo("", "02  Proposed fix", Path(estado.proposta.referencia_diff).read_text(encoding="utf-8").strip(),
+                  "Approval blocked until tests pass.")
 
         imagem = os.getenv("SH_TEST_DOCKER_IMAGE")
         if not imagem:
-            def pytest_simulado(imagem, timeout, preparar):
+            def pytest_demo_or_stub(imagem, timeout, preparar):
                 pasta = tmp_path / "projeto-em-teste"
                 preparar(pasta)
                 assert (pasta / "clientes.py").read_text(encoding="utf-8") == corrigido
+                if demo:
+                    resultado = subprocess.run(
+                        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"],
+                        cwd=pasta, capture_output=True, text=True, check=False, timeout=timeout,
+                    )
+                    show_demo("", "03  Validate and review", resultado.stdout.strip())
+                    return {
+                        "status": "aprovados" if resultado.returncode == 0 else "falharam",
+                        "saida": resultado.stdout + resultado.stderr,
+                    }
                 return {"status": "aprovados"}
-            monkeypatch.setattr(executor, "_executar_pytest_isolado", pytest_simulado)
+            monkeypatch.setattr(executor, "_executar_pytest_isolado", pytest_demo_or_stub)
         monkeypatch.setenv("IMAGEM_TESTE", imagem or "fixture:local")
         assert main.main(["reprocessar", id_evento]) == 0
         estado = repo.obter_evento(id_evento).estado
@@ -165,10 +190,15 @@ def test_monitor_ate_publicacao_git(tmp_path, monkeypatch, banco, capsys):
     assert git("status", "--porcelain") == ""
     assert (projeto / "clientes.py").read_text(encoding="utf-8") == original
     assert git("show", f"{estado.commit_git}:clientes.py") == corrigido.strip()
+    assert git("show", "-s", "--format=%s", estado.commit_git) == f"fix: apply SH-PSCBS proposal {id_proposta}"
     assert main.main(aprovar) == 0
     assert repo.obter_evento(id_evento).estado.commit_git == estado.commit_git
     assert main.main(["publicar", id_evento]) == 0
     assert git("rev-parse", f"refs/heads/{estado.branch_git}", cwd=remoto) == estado.commit_git
+    show_demo("Review approved. Commit created after human approval.", "",
+              "04  Published to a local Git remote",
+              f"{estado.commit_git[:7]}  {estado.branch_git}",
+              "Original checkout is clean.")
     assert repo.listar_pendentes() == []
     assert EtapaCorrecao.APROVADO in [item.etapa for item in repo.listar_historico(id_evento)]
     capsys.readouterr()
