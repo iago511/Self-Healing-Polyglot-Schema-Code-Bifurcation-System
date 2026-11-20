@@ -59,10 +59,10 @@ jobs:
         run: docker build -t sh-pscbs:test .
 
       - name: Verificar dependencias da imagem
-        run: docker run --rm sh-pscbs:test python -m pip check
+        run: docker run --rm --entrypoint python sh-pscbs:test -m pip check
 
       - name: Verificar sintaxe na imagem
-        run: docker run --rm sh-pscbs:test python -X pycache_prefix=/tmp/pycache -m compileall -q main.py sh_pscbs tools
+        run: docker run --rm --entrypoint python sh-pscbs:test -X pycache_prefix=/tmp/pycache -m compileall -q main.py sh_pscbs tools
 
   cd:
     name: CD - publicar imagem no GHCR
@@ -114,8 +114,8 @@ jobs:
           APP_IMAGE: ${{ steps.image.outputs.name }}@${{ steps.build.outputs.digest }}
         run: |
           docker pull "$APP_IMAGE"
-          docker run --rm "$APP_IMAGE" python -m pip check
-          docker run --rm "$APP_IMAGE" python -X pycache_prefix=/tmp/pycache -m compileall -q main.py sh_pscbs tools
+          docker run --rm --entrypoint python "$APP_IMAGE" -m pip check
+          docker run --rm --entrypoint python "$APP_IMAGE" -X pycache_prefix=/tmp/pycache -m compileall -q main.py sh_pscbs tools
 
       - name: Resumo do deployment
         env:
