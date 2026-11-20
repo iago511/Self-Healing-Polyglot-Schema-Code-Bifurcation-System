@@ -19,13 +19,14 @@ def criar_modelos_groq():
         raise ValueError("Configure GROQ_API_KEY no ambiente ou no arquivo .env.")
 
     comuns = {"api_key": chave, "temperature": 0, "timeout": 30, "max_retries": 1}
-    especialista = ChatGroq(
-        model=MODELO_ESPECIALISTA, reasoning_effort="medium", max_tokens=4096, **comuns
-    )
-    rapido = ChatGroq(
-        model=MODELO_RAPIDO, reasoning_effort="low", max_tokens=2048, **comuns
-    )
+    especialista = _modelo_groq(os.getenv("GROQ_MODELO_ESPECIALISTA") or MODELO_ESPECIALISTA, "medium", 4096, comuns)
+    rapido = _modelo_groq(os.getenv("GROQ_MODELO_RAPIDO") or MODELO_RAPIDO, "low", 2048, comuns)
     return especialista, rapido
+
+
+def _modelo_groq(nome, esforco, limite, comuns):
+    opcoes = {"reasoning_effort": esforco} if nome.startswith("openai/gpt-oss-") else {}
+    return ChatGroq(model=nome, max_tokens=limite, **opcoes, **comuns)
 
 
 def fallback_do_agente(reserva):
@@ -43,7 +44,7 @@ def fallback_do_agente(reserva):
 def criar_modelo_codigo():
     """Cria o modelo Ollama usado pelas ferramentas que editam código."""
     return ChatOllama(
-        model=MODELO_CODIGO,
+        model=os.getenv("OLLAMA_MODELO") or MODELO_CODIGO,
         temperature=0,
         base_url=os.getenv("OLLAMA_BASE_URL") or None,
     )

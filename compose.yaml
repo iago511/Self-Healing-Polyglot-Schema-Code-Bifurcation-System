@@ -1,0 +1,24 @@
+services:
+  monitor:
+    build: .
+    init: true
+    env_file: .env
+    environment:
+      PROJECT_PATH: /workspace
+      EVENTOS_DB_PATH: /data/eventos.db
+      PROPOSTAS_DIR: /data/propostas
+      DOCKER_TEST_STORAGE: volume
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: safe.directory
+      GIT_CONFIG_VALUE_0: /workspace
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - type: bind
+        source: ${TARGET_PROJECT_PATH:?Defina TARGET_PROJECT_PATH com a pasta do projeto no host}
+        target: /workspace
+        read_only: ${TARGET_PROJECT_READ_ONLY:-true}
+      - eventos:/data
+
+volumes:
+  eventos:

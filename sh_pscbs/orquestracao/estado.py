@@ -47,6 +47,15 @@ class HipoteseRenomeacao(BaseModel):
         return self
 
 
+class AnaliseSchema(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    resumo: str
+    riscos: list[str] = Field(default_factory=list)
+    hipoteses_renomeacao: list[HipoteseRenomeacao] = Field(default_factory=list)
+    duvidas: list[str] = Field(default_factory=list)
+
+
 class EventoSchema(BaseModel):
     """A mudança detectada, com a referência às duas versões comparadas."""
 
@@ -180,12 +189,16 @@ class DecisaoHumana(BaseModel):
 class EtapaCorrecao(StrEnum):
     DETECTADO = "detectado"
     ANALISANDO = "analisando"
+    IMPACTO_ANALISADO = "impacto_analisado"
     PLANEJADO = "planejado"
     PROPOSTA_GERADA = "proposta_gerada"
     VALIDANDO = "validando"
     EM_REVISAO = "em_revisao"
     AGUARDANDO_APROVACAO = "aguardando_aprovacao"
     PRECISA_ESCLARECIMENTO = "precisa_esclarecimento"
+    AJUSTES_NECESSARIOS = "ajustes_necessarios"
+    SEM_ALTERACOES = "sem_alteracoes"
+    APROVADO = "aprovado"
     APLICADO = "aplicado"
     REJEITADO = "rejeitado"
     FALHOU = "falhou"
@@ -199,12 +212,19 @@ class EstadoCorrecao(BaseModel):
     evento: EventoSchema
     etapa_atual: EtapaCorrecao = EtapaCorrecao.DETECTADO
     hipoteses_renomeacao: list[HipoteseRenomeacao] = Field(default_factory=list)
+    analise_schema: AnaliseSchema | None = None
+    codigo_base_id: str | None = None
     relatorio_impacto: RelatorioImpacto | None = None
     plano: PlanoCorrecao | None = None
     proposta: PropostaCorrecao | None = None
     validacao: ResultadoValidacao | None = None
     revisao: ParecerRevisao | None = None
     decisao_humana: DecisaoHumana | None = None
+    justificativa_planejamento: str | None = None
+    perguntas_planejamento: list[str] = Field(default_factory=list)
+    esclarecimentos: list[str] = Field(default_factory=list)
+    branch_git: str | None = None
+    commit_git: str | None = None
     tentativas: int = Field(default=0, ge=0)
     ultimo_erro: str | None = None
 

@@ -1,117 +1,82 @@
+"""Observa o schema e encaminha eventos pendentes ao grafo."""
+
 import os
 import time
-from pathlib import Path
 
-from sh_pscbs.monitoramento.snapshot import verificar_mudancas
+from psycopg2 import Error as ErroPostgreSQL
+
+from sh_pscbs.eventos.repositorio import ConflitoVersaoEvento
+from sh_pscbs.monitoramento.snapshot import identificar_schema, ler_schema_detalhado
+from sh_pscbs.orquestracao.estado import EtapaCorrecao
+from sh_pscbs.orquestracao.grafo import ETAPAS_PROCESSAVEIS, salvar_etapa
 
 
 def pasta_projeto():
     """Lê o caminho configurado para o projeto monitorado."""
     return os.getenv("PROJECT_PATH") or os.getenv("PASTA")
 
-INTERVALO = 5
 
 def extrair_mudancas(diff: str) -> dict:
+    """Interpreta o formato de texto dos snapshots legados."""
     removidas, adicionadas, tabelas_novas = [], [], []
     tabelas = set()
     for linha in diff.splitlines():
         linha = linha.strip()
-        if linha.startswith("[-]") and "." in linha:
-            tabela = linha.split(".")[0].replace("[-]", "").strip()
-            coluna = linha.split(".")[1].split(" ")[0]
-            removidas.append(coluna)
+        if linha.startswith("[+] Tabela adicionada:"):
+            tabelas_novas.append(linha.removeprefix("[+] Tabela adicionada:").strip())
+        elif linha.startswith(("[-]", "[+]")) and "." in linha:
+            tabela, coluna = linha[3:].strip().split(".", 1)
             tabelas.add(tabela)
-        elif linha.startswith("[+]") and "." in linha:
-            tabela = linha.split(".")[0].replace("[+]", "").strip()
-            coluna = linha.split(".")[1].split(" ")[0]
-            adicionadas.append(coluna)
-            tabelas.add(tabela)
-        elif linha.startswith("[+] Tabela adicionada:"):
-            nome = linha.replace("[+] Tabela adicionada:", "").strip()
-            tabelas_novas.append(nome)
+            destino = removidas if linha.startswith("[-]") else adicionadas
+            destino.append(coluna.split(" ", 1)[0])
     return {
         "removidas": removidas,
         "adicionadas": adicionadas,
-        "tabelas": list(tabelas),
+        "tabelas": sorted(tabelas),
         "tabelas_novas": tabelas_novas,
     }
-def rodar_watcher(invocar_agente):
-    db_url = os.getenv("DB_URL")
-    pasta = pasta_projeto()
-    if not db_url or not pasta or not Path(pasta).is_dir():
-        print("[Watcher] Configure DB_URL e um PROJECT_PATH válido para monitorar o banco.")
-        return
-    print("[Watcher] Iniciado.\n")
+
+
+def escopo(config):
+    return {"projeto": config.projeto_id, "banco": config.banco_id, "nome_schema": config.nome_schema}
+
+
+def processar_evento(config, grafo, registro):
+    return grafo.invoke(
+        {"registro": registro}, config={"recursion_limit": 4 * config.max_tentativas + 20},
+    )["registro"]
+
+
+def monitorar_uma_vez(config, repo, grafo):
+    schema = ler_schema_detalhado(config.db_url, config.nome_schema)
+    if evento := repo.observar_schema(**escopo(config), schema=schema):
+        print(f"Evento detectado {evento.estado.evento.id_evento}")
+    versao_schema = identificar_schema(schema)
+    resultados = []
+    for registro in repo.listar_pendentes(**escopo(config), etapas=ETAPAS_PROCESSAVEIS):
+        try:
+            if registro.estado.evento.versao_snapshot_atual != versao_schema:
+                resultado = salvar_etapa(
+                    repo, registro, EtapaCorrecao.FALHOU,
+                    ultimo_erro="O schema mudou novamente antes de concluir este evento.",
+                )
+            else:
+                resultado = processar_evento(config, grafo, registro)
+        except ConflitoVersaoEvento:
+            # Outro processo já avançou o mesmo evento.
+            continue
+        resultados.append(resultado)
+        print(f"{resultado.estado.evento.id_evento} {resultado.estado.etapa_atual.value}")
+    return resultados
+
+
+def rodar_watcher(config, repo, grafo, *, uma_vez=False):
+    print(f"Monitorando {config.projeto_id} no schema {config.nome_schema}.")
+    if uma_vez:
+        return monitorar_uma_vez(config, repo, grafo)
     while True:
-        resultado = verificar_mudancas(db_url)
-
-        if "Nenhuma mudança" not in resultado and "Primeiro snapshot" not in resultado:
-            print(f"\n[Watcher] Mudança detectada:\n{resultado}\n")
-            mudancas = extrair_mudancas(resultado)
-            tabelas_str = ", ".join(mudancas["tabelas"])
-
-            if mudancas["removidas"]:
-                mensagem_remocao = f"""
-O banco removeu colunas. Diff:
-{resultado}
-
-Tabelas afetadas: {tabelas_str}
-Colunas removidas: {mudancas['removidas']}
-
-Execute:
-1. Busque em {pasta} arquivos que referenciam essas colunas.
-2. Para cada arquivo encontrado, chame reescrever_arquivo_afetado passando tabela='{tabelas_str}'.
-3. Informe o que foi corrigido.
-"""
-                invocar_agente(mensagem_remocao, thread_id="watcher_remocao")
-
-            if mudancas["adicionadas"]:
-                mensagem_adicao = f"""
-O banco adicionou novas colunas. Diff:
-{resultado}
-
-Tabelas afetadas: {tabelas_str}
-Colunas adicionadas: {mudancas['adicionadas']}
-
-Execute:
-1. Liste todos os arquivos .py em {pasta} usando get_tree_folder.
-2. Para cada arquivo .py encontrado, chame reescrever_arquivo_afetado passando tabela='{tabelas_str}'.
-3. Informe quais arquivos foram atualizados.
-"""
-                invocar_agente(mensagem_adicao, thread_id="watcher_adicao")
-
-            if mudancas["tabelas_novas"]:
-                for tabela_nova in mudancas["tabelas_novas"]:
-                    mensagem_nova_tabela = f"""
-O banco criou uma nova tabela chamada `{tabela_nova}`. Diff:
-{resultado}
-
-Esta tabela ainda não existe no projeto em {pasta}.
-
-Execute:
-1. Leia os arquivos .py existentes em {pasta} usando get_tree_folder para entender o padrão do projeto.
-2. Leia o conteúdo de um arquivo existente (ex: api.py ou models.py) para entender o estilo do código.
-3. Crie um arquivo novo chamado `{tabela_nova}.py` em {pasta} seguindo o mesmo padrão dos arquivos existentes, contendo:
-   - Uma classe ou modelo representando a tabela `{tabela_nova}`.
-   - Funções de criar, buscar e listar registros dessa tabela.
-   - Validações básicas se o arquivo de referência tiver.
-4. Informe o caminho do arquivo criado.
-"""
-                    invocar_agente(mensagem_nova_tabela, thread_id=f"watcher_nova_{tabela_nova}")
-
-                    mensagem_integrar = f"""
-O arquivo `{tabela_nova}.py` acabou de ser criado em {pasta}.
-
-Agora verifique se algum arquivo existente no projeto precisa ser atualizado para integrar com ele.
-
-Execute:
-1. Liste todos os arquivos .py em {pasta} usando get_tree_folder.
-2. Leia o conteúdo de cada arquivo existente (exceto `{tabela_nova}.py`).
-3. Para cada arquivo, avalie se ele deveria importar ou referenciar `{tabela_nova}.py` com base no que já faz.
-   Exemplos: um arquivo de rotas deveria incluir as rotas do novo módulo. Um arquivo de modelos deveria importar a nova classe.
-4. Se precisar de atualização, chame reescrever_arquivo_afetado com tabela='{tabela_nova}'.
-5. Informe quais arquivos foram atualizados e o que foi adicionado em cada um.
-"""
-                    invocar_agente(mensagem_integrar, thread_id=f"watcher_integrar_{tabela_nova}")
-
-        time.sleep(INTERVALO)
+        try:
+            monitorar_uma_vez(config, repo, grafo)
+        except ErroPostgreSQL as erro:
+            print(f"Falha ao consultar PostgreSQL ({type(erro).__name__}). Nova tentativa em {config.intervalo}s.")
+        time.sleep(config.intervalo)

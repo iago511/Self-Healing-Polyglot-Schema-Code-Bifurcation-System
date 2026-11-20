@@ -2,7 +2,6 @@
 
 import hashlib
 import json
-import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -19,9 +18,9 @@ from tools.tools_alteracoes import (
     _diff_arquivo,
     _executar_pytest_isolado,
     _hash_projeto,
-    _ignorar_copia,
     _ler_bytes,
     _permissoes_copia_teste,
+    copiar_projeto_isolado,
 )
 
 
@@ -155,7 +154,7 @@ def validar_proposta_correcao(
         testes = {"status": "nao_executados", "detalhe": "Informe uma imagem Docker local com pytest e dependências."}
     else:
         def preparar(projeto):
-            shutil.copytree(artefatos.copia, projeto, ignore=_ignorar_copia)
+            copiar_projeto_isolado(artefatos.copia, projeto)
             if identificar_codigo_base(projeto) != artefatos.hash_copia:
                 raise ValueError("A cópia da proposta mudou durante a preparação dos testes.")
             _permissoes_copia_teste(projeto)

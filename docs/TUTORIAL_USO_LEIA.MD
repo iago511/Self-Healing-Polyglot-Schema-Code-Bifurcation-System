@@ -1,162 +1,72 @@
-# SH-PSCBS
+# Guia de execução
 
-Sistema que monitora seu banco PostgreSQL e atualiza o código automaticamente quando o schema muda.
+## Local
 
-Quando você remove uma coluna, ele acha todos os arquivos que usam ela e reescreve. Quando você adiciona, ele inclui nos arquivos existentes. Quando você cria uma tabela nova, ele cria o arquivo correspondente no projeto.
-
----
-
-## Antes de começar
-
-Você vai precisar de:
-
-- Python 3.11 ou superior
-- Ollama instalado na máquina
-- Uma chave da API da Groq
-- Um banco PostgreSQL rodando (local ou remoto)
-
----
-
-## 1. Clonar e instalar dependências
+Use Python 3.11 ou superior, Git, PostgreSQL, Docker e Ollama. A conta PostgreSQL precisa enxergar o schema e as colunas monitoradas. Use uma conta com acesso somente leitura.
 
 ```bash
-git clone <url-do-repositorio>
-cd sh
 python -m pip install -r requirements.txt
-```
-
-Se você usa `venv` (recomendado):
-
-```bash
-python -m venv .venv
-.venv\Scripts\activate        # Windows
-source .venv/bin/activate     # Linux/Mac
-python -m pip install -r requirements.txt
-```
-
----
-
-## 2. Instalar o Ollama e baixar o modelo
-
-O Ollama roda o modelo de código localmente. Não fica rodando em background — só consome recurso quando está reescrevendo um arquivo.
-
-**Windows:** baixe o instalador em https://ollama.com e instale normalmente.
-
-**Linux/Mac:**
-```bash
-curl -fsSL https://ollama.com/install.sh | sh
-```
-
-Depois de instalar, baixe o modelo:
-
-```bash
 ollama pull qwen2.5-coder:3b
 ```
 
-Isso baixa cerca de 2GB e só precisa ser feito uma vez. Para confirmar que funcionou:
+Copie `.env.example` para `.env` e preencha `PROJECT_PATH`, `DB_URL` e `GROQ_API_KEY`. Ajuste `PG_SCHEMA` quando o schema for diferente de `public`. O Ollama usa a instância local por padrão. Configure `IMAGEM_TESTE` com uma imagem Docker que tenha Python, pytest e as dependências do projeto monitorado. O executor usa a imagem local, executa sem rede e bloqueia a aprovação quando o pytest fica pendente ou falha.
 
 ```bash
-ollama run qwen2.5-coder:3b "escreva uma função python que soma dois números"
+python main.py monitor --uma-vez
+python main.py monitor
 ```
 
-Se retornar código, está pronto. Saia com `/bye`.
+O primeiro ciclo registra o schema inicial. Os próximos registram as mudanças de tabelas e colunas e avançam os eventos no grafo. O SQLite e os artefatos ficam na pasta de dados do usuário por padrão. `EVENTOS_DB_PATH` e `PROPOSTAS_DIR` permitem escolher outros locais, sempre fora do projeto monitorado.
 
----
-
-## 3. Pegar a chave da Groq
-
-Crie uma chave no [console da Groq](https://console.groq.com/keys).
-
----
-
-## 4. Configurar o .env
-
-Crie um arquivo chamado `.env` dentro da pasta `sh`:
-
-```
-GROQ_API_KEY=sua_chave_aqui
-DB_URL=postgresql://usuario:senha@host:5432/nome_do_banco
-PROJECT_PATH=C:\caminho\completo\do\seu\projeto
-```
-
-- `DB_URL` é a URL de conexão com o seu banco PostgreSQL
-- `PROJECT_PATH` é o caminho da pasta com os arquivos que o sistema vai analisar.
-- Preencha `OLLAMA_BASE_URL` se o Ollama estiver em um endereço diferente do padrão local.
-
-Para banco com SSL (ex: Aiven, Supabase, Railway):
-
-```
-DB_URL=postgresql://usuario:senha@host:5432/banco?sslmode=require
-```
-
----
-
-## 5. Rodar
+## Revisão e publicação
 
 ```bash
-cd sh
-python main.py
+python main.py pendentes
+python main.py pendentes --falhas
+python main.py evento ID_EVENTO
+python main.py esclarecer ID_EVENTO --resposta "A coluna foi renomeada no mesmo cadastro."
+python main.py reprocessar ID_EVENTO
+python main.py ajustar ID_EVENTO --proposta ID_PROPOSTA --autor iago --motivo "Preserve o formato da API."
+python main.py rejeitar ID_EVENTO --proposta ID_PROPOSTA --autor iago
+python main.py aprovar ID_EVENTO --proposta ID_PROPOSTA --autor iago
+python main.py publicar ID_EVENTO --remoto origin
 ```
 
-Na primeira execução, o sistema salva um snapshot do schema atual do banco e não faz nada mais. Isso serve como ponto de comparação.
+O comando `evento` mostra a análise, o caminho do diff, os testes, o parecer e o histórico. Para aprovar, o projeto monitorado precisa estar na raiz de um repositório Git com checkout limpo e identidade configurada. A aprovação cria um commit em `sh-pscbs/ID_PROPOSTA`, preservando o checkout original. `publicar` envia só essa branch. O merge fica a cargo do repositório de destino.
 
-A partir daí, toda vez que você alterar o banco, o sistema detecta a mudança e age automaticamente.
-
----
-
-## Como funciona na prática
-
-**Você remove uma coluna:**
-O sistema acha todos os arquivos `.py`, `.java`, `.kt`, `.dart`, `.js`, `.ts` ou `.xml` que mencionam aquela coluna e reescreve cada um removendo as referências.
-
-**Você adiciona uma coluna:**
-O sistema pega todos os arquivos do projeto e adiciona a nova coluna nos parâmetros de funções, dicionários de payload e validações.
-
-**Você cria uma tabela nova:**
-O sistema lê os arquivos existentes para entender o padrão do projeto, cria um arquivo novo para aquela tabela e depois verifica se algum arquivo existente precisa importar ou referenciar o novo.
-
-Antes de qualquer reescrita, o arquivo original é salvo em `sua-pasta/backups/` com timestamp. Se algo der errado, você tem o histórico.
-
----
-
-## Estrutura do projeto
-
-```
-sh/
-  main.py        - inicializa o agente e o watcher
-  sh_pscbs/
-    monitoramento/  - watcher e snapshots do PostgreSQL
-    modelos/        - configuração da Groq e do Ollama
-    agentes/        - instruções do agente e arquivos para os agentes futuros
-    orquestracao/   - arquivos para o grafo e o estado
-    eventos/        - arquivo para persistência de eventos
-    validacao/      - arquivo para o executor de validação
-  tools/            - ferramentas que o agente pode usar
-  docs/             - documentação do projeto
-  .env           - suas configurações (não commitar)
-  schema_snapshots/  - histórico de schemas salvos
+```bash
+python main.py git-status
+python main.py copiar /caminho/para/uma/pasta-nova
 ```
 
----
+A cópia exclui o histórico do Git, arquivos `.env`, links, ambientes virtuais e caches. Use `reprocessar` após configurar a imagem de testes ou corrigir um erro de infraestrutura. Use `ajustar` para passar instruções de correção ao agente.
 
-## Parar o sistema
+## Docker
 
-`Ctrl+C` no terminal.
+Configure `TARGET_PROJECT_PATH` no `.env` com o caminho do projeto no host. Para PostgreSQL e Ollama no host, substitua `127.0.0.1` por `host.docker.internal` nas URLs e habilite o acesso nesses serviços.
 
-O Ollama não precisa ser encerrado manualmente — ele para sozinho quando não está sendo usado.
+```bash
+docker compose build
+docker compose run --rm monitor monitor --uma-vez
+docker compose up -d monitor
+docker compose run --rm monitor pendentes
+```
 
----
+Por padrão, o Compose monta o projeto como somente leitura e persiste o SQLite e as propostas no volume `eventos`. Para rodar o pytest pelo monitor em Docker com um daemon confiável, use o arquivo adicional e informe em `DOCKER_SOCKET_GID` o grupo com acesso ao socket. Esse acesso dá ao monitor controle sobre o daemon.
 
-## Dúvidas comuns
+```bash
+docker compose -f compose.yaml -f compose.testes.yaml up -d monitor
+docker compose -f compose.yaml -f compose.testes.yaml run --rm monitor reprocessar ID_EVENTO
+```
 
-**O sistema alterou um arquivo errado.**
-Vá em `sua-pasta/backups/`, encontre o `.bak` com o timestamp antes da alteração e restaure manualmente.
+Para aprovar via Compose, habilite `TARGET_PROJECT_READ_ONLY=false`, conceda ao usuário do contêiner permissão para gravar em `.git` e configure as identidades de autor e committer no Git. Para publicar, configure também as credenciais do remoto no ambiente de execução.
 
-**Erro de conexão com o banco.**
-Verifique se a URL está correta e se o banco está acessível. Para bancos remotos com SSL, lembre de adicionar `?sslmode=require` no final da URL.
+## Testes do SH-PSCBS
 
-**O Ollama trava ou fica lento.**
-O modelo `qwen2.5-coder:3b` precisa de pelo menos 4GB de RAM livre. Se sua máquina tiver pouca memória, feche outros programas antes de rodar.
+```bash
+python -m pip install -r requirements-dev.txt
+python -m pytest -q
+docker build --target test -t sh-pscbs:pytest .
+```
 
-**Quer usar um venv específico.**
-No `.env`, não há configuração de Python — mas se precisar, abra o `main.py` e confirme que está rodando com o Python correto usando `which python` ou `where python` antes de iniciar.
+O teste de integração usa um repositório Git temporário. Para incluir PostgreSQL e Docker reais na execução, aponte `SH_TEST_POSTGRES_DSN` para um banco descartável com permissão de criar schema e `SH_TEST_DOCKER_IMAGE` para `sh-pscbs:pytest`. Rode `python -m pytest -q testes/test_integracao_grafo.py`. No host, defina `DOCKER_TEST_STORAGE=volume` para testar o modo usado pelo Compose. Os modelos são simulados nesse teste.
