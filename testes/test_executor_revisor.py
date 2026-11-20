@@ -43,6 +43,7 @@ def preparar_proposta(tmp_path):
 
 
 def _simular_docker(monkeypatch, retorno):
+    monkeypatch.setenv("DOCKER_TEST_STORAGE", "bind")
     monkeypatch.setattr(tools_alteracoes.shutil, "which", lambda _: "docker")
     execucoes = []
 
