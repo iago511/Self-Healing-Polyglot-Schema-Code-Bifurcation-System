@@ -310,7 +310,7 @@ def _ignorar_copia(diretorio, nomes):
     return ignorados
 
 
-def _hash_projeto(raiz):
+def _hash_projeto(raiz, *, ignorar_arquivos=frozenset()):
     digest = hashlib.sha256()
     for diretorio, pastas, arquivos in os.walk(raiz, followlinks=False):
         ignorados = _ignorar_copia(diretorio, pastas + arquivos)
@@ -319,8 +319,10 @@ def _hash_projeto(raiz):
         digest.update(b"D\0" + relativo + b"\0")
         for nome in sorted(nome for nome in arquivos if nome not in ignorados):
             arquivo = Path(diretorio) / nome
-            relativo = arquivo.relative_to(raiz).as_posix().encode("utf-8")
-            digest.update(b"F\0" + relativo + b"\0")
+            caminho_relativo = arquivo.relative_to(raiz).as_posix()
+            if caminho_relativo in ignorar_arquivos:
+                continue
+            digest.update(b"F\0" + caminho_relativo.encode("utf-8") + b"\0")
             conteudo = hashlib.sha256()
             with arquivo.open("rb") as entrada:
                 for bloco in iter(lambda: entrada.read(1024 * 1024), b""):
@@ -329,7 +331,30 @@ def _hash_projeto(raiz):
     return digest.hexdigest()
 
 
+def _permissoes_copia_teste(projeto):
+    for diretorio, _, arquivos in os.walk(projeto):
+        os.chmod(diretorio, stat.S_IMODE(os.stat(diretorio).st_mode) | 0o755)
+        for nome_arquivo in arquivos:
+            caminho = Path(diretorio) / nome_arquivo
+            os.chmod(caminho, stat.S_IMODE(caminho.stat().st_mode) | 0o444)
+
+
 def _testar_em_container(original, candidato, dados, hash_base, imagem, timeout):
+    def preparar(projeto):
+        shutil.copytree(original, projeto, ignore=_ignorar_copia)
+        if _hash_projeto(projeto) != hash_base:
+            raise ValueError("O projeto mudou durante a preparação dos testes.")
+        _permissoes_copia_teste(projeto)
+        arquivo_teste = _caminho(projeto, dados["arquivo"])
+        if dados["operacao"] == "excluir":
+            arquivo_teste.unlink()
+        else:
+            _escrever_atomico(arquivo_teste, candidato.read_bytes(), 0o644)
+
+    return _executar_pytest_isolado(imagem, timeout, preparar)
+
+
+def _executar_pytest_isolado(imagem, timeout, preparar_projeto):
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/@-]*", imagem):
         return {"status": "erro", "detalhe": "Nome de imagem Docker inválido."}
     if not shutil.which("docker"):
@@ -341,19 +366,7 @@ def _testar_em_container(original, candidato, dados, hash_base, imagem, timeout)
             return {"status": "nao_executados", "detalhe": "Docker não está acessível ou a imagem não está disponível localmente."}
         with tempfile.TemporaryDirectory(prefix="sh_pscbs_testes_") as temporario:
             projeto = (Path(temporario) / "projeto").resolve()
-            shutil.copytree(original, projeto, ignore=_ignorar_copia)
-            if _hash_projeto(projeto) != hash_base:
-                return {"status": "erro", "detalhe": "O projeto mudou durante a preparação dos testes."}
-            for diretorio, _, arquivos in os.walk(projeto):
-                os.chmod(diretorio, stat.S_IMODE(os.stat(diretorio).st_mode) | 0o755)
-                for nome_arquivo in arquivos:
-                    caminho = Path(diretorio) / nome_arquivo
-                    os.chmod(caminho, stat.S_IMODE(caminho.stat().st_mode) | 0o444)
-            arquivo_teste = _caminho(projeto, dados["arquivo"])
-            if dados["operacao"] == "excluir":
-                arquivo_teste.unlink()
-            else:
-                _escrever_atomico(arquivo_teste, candidato.read_bytes(), 0o644)
+            preparar_projeto(projeto)
             if "," in str(projeto):
                 return {"status": "erro", "detalhe": "O caminho temporário contém vírgula e não pode ser montado."}
             nome = "sh-pscbs-test-" + uuid4().hex
@@ -381,9 +394,11 @@ def _testar_em_container(original, candidato, dados, hash_base, imagem, timeout)
                 saida.seek(0, os.SEEK_END)
                 saida.seek(max(0, saida.tell() - 12000))
                 texto = saida.read().decode("utf-8", errors="replace")
+            if resultado.returncode == 5:
+                return {"status": "nao_executados", "detalhe": "O pytest não coletou testes.", "saida": texto}
             return {"status": "aprovados" if resultado.returncode == 0 else "falharam",
                     "codigo_saida": resultado.returncode, "saida": texto}
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         return {"status": "erro", "detalhe": str(exc)}
 
 
