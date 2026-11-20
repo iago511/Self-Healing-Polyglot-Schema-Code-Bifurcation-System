@@ -1,5 +1,7 @@
 # SH-PSCBS
 
+**Languages:** English · [Português (Brasil)](README.pt-BR.md) · [Español](README.es.md)
+
 ![SH-PSCBS demo showing a PostgreSQL column rename, the proposed SQL fix, a passing test, and an approved Git commit](docs/assets/workflow-demo.gif)
 
 **Catch code that breaks when your PostgreSQL schema changes.** SH-PSCBS finds affected code, proposes a fix in an isolated copy, and prepares a Git commit after tests, review, and human approval.
