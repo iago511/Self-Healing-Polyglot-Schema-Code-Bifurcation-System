@@ -63,6 +63,13 @@ def _chamada(nome, argumentos, numero):
     }]}
 
 
+def _resposta_json(argumentos):
+    return {"model": "openai/gpt-oss-120b", "choices": [{
+        "finish_reason": "stop",
+        "message": {"role": "assistant", "content": json.dumps(argumentos)},
+    }]}
+
+
 def test_monitor_ate_publicacao_git(tmp_path, monkeypatch, banco, capsys):
     demo = os.getenv("SH_DEMO_MODE") == "1"
 
@@ -126,10 +133,10 @@ def test_monitor_ate_publicacao_git(tmp_path, monkeypatch, banco, capsys):
                 "justificativa": "A consulta usa a coluna atual.", "ajustes_solicitados": [],
             }, len(chamadas))
         assert contexto["relatorio_impacto"]["evidencias"]
-        return _chamada("ResultadoPlanejamento", {
+        return _resposta_json({
             "status": "planejado", "justificativa": "A consulta usa a coluna antiga.", "perguntas": [],
             "plano": {"acoes": [{"arquivo": "./clientes.py", "operacao": "alterar", "descricao": "Atualizar a consulta."}]},
-        }, len(chamadas))
+        })
 
     assert main.main(["copiar", str(tmp_path / "copia")]) == 0
     copia = tmp_path / "copia"
