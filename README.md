@@ -44,6 +44,10 @@ The first run records a baseline. Run `python main.py monitor` to keep watching 
 
 See the [usage guide](docs/usage.md) for Docker deployment, review, and publishing, and the [architecture overview](docs/architecture.md) for the full workflow.
 
+## VS Code extension
+
+SH-PSCBS also includes a VS Code extension interface for monitoring, reviewing proposal diffs, and approving or rejecting changes. See the [extension setup guide](docs/vscode-extension.md).
+
 ## Current scope and limitations
 
 This is an experimental developer tool focused on PostgreSQL and Python projects. The CLI currently uses Portuguese command names. Other languages require further validation and tooling.

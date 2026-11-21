@@ -1,0 +1,82 @@
+{
+  "name": "sh-pscbs-vscode",
+  "displayName": "SH-PSCBS: PostgreSQL Schema Guardian",
+  "description": "Detect PostgreSQL schema changes, review isolated fixes, and approve Git proposals from VS Code.",
+  "version": "0.1.0",
+  "publisher": "iago511",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/iago511/Self-Healing-Polyglot-Schema-Code-Bifurcation-System.git" },
+  "engines": { "vscode": "^1.90.0" },
+  "categories": ["Other", "Visualization"],
+  "keywords": ["postgresql", "database", "schema", "ai", "code-review", "self-healing"],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [{ "id": "shPscbs", "title": "SH-PSCBS", "icon": "media/shpscbs.svg" }]
+    },
+    "views": {
+      "shPscbs": [{ "type": "webview", "id": "shPscbs.dashboard", "name": "Schema Guardian" }]
+    },
+    "commands": [
+      { "command": "shPscbs.openDashboard", "title": "SH-PSCBS: Open Dashboard", "icon": "$(shield)" },
+      { "command": "shPscbs.toggleMonitor", "title": "SH-PSCBS: Turn Monitor On or Off" },
+      { "command": "shPscbs.runOnce", "title": "SH-PSCBS: Scan for Schema Changes Now" },
+      { "command": "shPscbs.refresh", "title": "SH-PSCBS: Refresh Events" },
+      { "command": "shPscbs.setupRuntime", "title": "SH-PSCBS: Set Up or Repair Python Runtime" },
+      { "command": "shPscbs.setDatabase", "title": "SH-PSCBS: Set PostgreSQL Connection" },
+      { "command": "shPscbs.setGroqKey", "title": "SH-PSCBS: Set Groq API Key" },
+      { "command": "shPscbs.testGroqConnection", "title": "SH-PSCBS: Test Groq API Connection" },
+      { "command": "shPscbs.clearCredentials", "title": "SH-PSCBS: Clear Stored Credentials" },
+      { "command": "shPscbs.openSettings", "title": "SH-PSCBS: Configure Preferences" },
+      { "command": "shPscbs.openTerminal", "title": "SH-PSCBS: Open CLI in Integrated Terminal" },
+      { "command": "shPscbs.showEvent", "title": "SH-PSCBS: Review Event" },
+      { "command": "shPscbs.approveEvent", "title": "SH-PSCBS: Approve Proposal" },
+      { "command": "shPscbs.rejectEvent", "title": "SH-PSCBS: Reject Proposal" },
+      { "command": "shPscbs.reprocessEvent", "title": "SH-PSCBS: Retry Event" },
+      { "command": "shPscbs.clarifyEvent", "title": "SH-PSCBS: Answer Planner Question" },
+      { "command": "shPscbs.adjustProposal", "title": "SH-PSCBS: Request Proposal Changes" },
+      { "command": "shPscbs.publishEvent", "title": "SH-PSCBS: Publish Approved Branch" }
+    ],
+    "keybindings": [
+      { "command": "shPscbs.openDashboard", "key": "ctrl+alt+s", "mac": "cmd+alt+s" },
+      { "command": "shPscbs.toggleMonitor", "key": "ctrl+alt+m", "mac": "cmd+alt+m" }
+    ],
+    "menus": {
+      "editor/title": [{ "command": "shPscbs.openDashboard", "group": "navigation@90", "when": "resourceScheme == file" }]
+    },
+    "configuration": {
+      "title": "SH-PSCBS",
+      "properties": {
+        "shPscbs.pythonPath": { "type": "string", "default": "", "description": "Python executable. Leave empty to use the managed runtime or python on PATH." },
+        "shPscbs.projectPath": { "type": "string", "default": "", "description": "Project to monitor. Defaults to the first open workspace folder." },
+        "shPscbs.projectId": { "type": "string", "default": "", "description": "Optional stable project ID. Match the ID used by an existing CLI setup." },
+        "shPscbs.databaseId": { "type": "string", "default": "", "description": "Optional stable database ID. Match BANCO_ID from an existing CLI setup." },
+        "shPscbs.databaseSchema": { "type": "string", "default": "public", "description": "PostgreSQL schema to watch." },
+        "shPscbs.watchIntervalSeconds": { "type": "integer", "default": 5, "minimum": 1, "maximum": 3600, "description": "Seconds between schema scans while the monitor is running." },
+        "shPscbs.groqModel": { "type": "string", "default": "openai/gpt-oss-120b", "description": "Groq model used for planning and code review." },
+        "shPscbs.fastGroqModel": { "type": "string", "default": "openai/gpt-oss-20b", "description": "Groq model used for fast tasks." },
+        "shPscbs.ollamaModel": { "type": "string", "default": "qwen2.5-coder:3b", "description": "Local Ollama model used to generate code changes." },
+        "shPscbs.ollamaBaseUrl": { "type": "string", "default": "http://127.0.0.1:11434", "description": "Ollama server URL." },
+        "shPscbs.ollamaTimeoutSeconds": { "type": "integer", "default": 300, "minimum": 1, "maximum": 1800, "description": "Timeout for requests to Ollama." },
+        "shPscbs.testImage": { "type": "string", "default": "", "description": "Docker image containing the project's test dependencies." },
+        "shPscbs.testTimeoutSeconds": { "type": "integer", "default": 120, "minimum": 1, "maximum": 1800, "description": "Timeout for isolated tests." },
+        "shPscbs.maxAttempts": { "type": "integer", "default": 2, "minimum": 1, "maximum": 10, "description": "Maximum automatic correction attempts." },
+        "shPscbs.reviewerName": { "type": "string", "default": "", "description": "Name recorded in Git proposal decisions." },
+        "shPscbs.eventsDatabasePath": { "type": "string", "default": "", "description": "Optional path for SQLite event storage. Leave empty to use the OS data directory." },
+        "shPscbs.proposalsDirectory": { "type": "string", "default": "", "description": "Optional path for proposal artifacts. Leave empty to use the OS data directory." }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "node ./node_modules/typescript/bin/tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "test": "npm run compile && node --test dist/test/*.test.js",
+    "package": "node ./node_modules/@vscode/vsce/vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.2.1",
+    "typescript": "^5.5.4"
+  }
+}

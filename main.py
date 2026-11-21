@@ -29,6 +29,8 @@ def _parser():
     monitor.add_argument("--uma-vez", action="store_true", help="Executa apenas um ciclo.")
     pendentes = comandos.add_parser("pendentes", help="Lista eventos em aberto.")
     pendentes.add_argument("--falhas", action="store_true", help="Lista eventos que falharam.")
+    pendentes.add_argument("--todos", action="store_true", help="Inclui eventos concluídos no histórico.")
+    pendentes.add_argument("--json", action="store_true", help="Retorna os eventos com estado estruturado.")
     comandos.add_parser("git-status", help="Mostra o estado do checkout original.")
     comandos.add_parser("copiar", help="Copia o projeto para uma pasta nova.").add_argument("destino", type=Path)
 
@@ -138,8 +140,19 @@ def _executar(config, args):
         resultados = rodar_watcher(config, repo, criar_grafo(config, repo), uma_vez=getattr(args, "uma_vez", False))
         return int(any(r.estado.etapa_atual == EtapaCorrecao.FALHOU for r in resultados or ()))
     if args.comando == "pendentes":
-        etapas = (EtapaCorrecao.FALHOU,) if args.falhas else None
-        for registro in repo.listar_pendentes(**escopo(config), etapas=etapas):
+        if args.falhas and args.todos:
+            raise ValueError("Use --falhas ou --todos, não ambos.")
+        etapas = tuple(EtapaCorrecao) if args.todos else ((EtapaCorrecao.FALHOU,) if args.falhas else None)
+        registros = repo.listar_pendentes(**escopo(config), etapas=etapas)
+        if getattr(args, "json", False):
+            print(json.dumps([{
+                "id": registro.estado.evento.id_evento,
+                "stage": registro.estado.etapa_atual.value,
+                "proposalId": registro.estado.proposta.id_proposta if registro.estado.proposta else "",
+                "detail": registro.estado.model_dump(mode="json"),
+            } for registro in registros], ensure_ascii=False))
+            return 0
+        for registro in registros:
             estado = registro.estado
             proposta = estado.proposta.id_proposta if estado.proposta else ""
             print(f"{estado.evento.id_evento} {estado.etapa_atual.value} {proposta}".rstrip())
