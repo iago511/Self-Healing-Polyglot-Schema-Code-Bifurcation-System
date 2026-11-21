@@ -44,6 +44,13 @@ def _resposta_json(conteudo):
     }]}
 
 
+def _resposta_texto(conteudo):
+    return {"model": "openai/gpt-oss-120b", "choices": [{
+        "finish_reason": "stop",
+        "message": {"role": "assistant", "content": conteudo},
+    }]}
+
+
 def _resultado_planejado(arquivo):
     return {
         "status": "planejado",
@@ -72,15 +79,17 @@ def test_planejamento_usa_reserva_quando_groq_falha_ao_gerar_chamada(tmp_path, e
     )
 
     with (
-        patch.object(principal.client, "create", side_effect=erro) as tentativa,
-        patch.object(reserva.client, "create", return_value=_resposta_json(
-            _resultado_planejado("clientes.sql"),
+        patch.object(principal.client, "create", side_effect=[
+            erro, _resposta_json(_resultado_planejado("clientes.sql")),
+        ]) as tentativa,
+        patch.object(reserva.client, "create", return_value=_resposta_texto(
+            "clientes.sql consulta a coluna apelido removida. Atualizar a consulta SQL."
         )) as segunda,
     ):
         resultado = planejar_correcao(evento, analisar_schema(evento), RelatorioImpacto(), tmp_path)
 
     assert resultado.status == "planejado"
-    tentativa.assert_called_once()
+    assert tentativa.call_count == 2
     segunda.assert_called_once()
 
 
@@ -111,18 +120,25 @@ def test_agente_investiga_com_tools_de_leitura_e_entrega_plano(tmp_path, evento)
 
     def responder(**kwargs):
         nonlocal chamadas
+        mensagens = kwargs["messages"]
+        if "tools" not in kwargs:
+            assert kwargs["response_format"]["type"] == "json_schema"
+            assert kwargs["response_format"]["json_schema"]["strict"] is True
+            assert "segredo-simulado" not in json.dumps(mensagens)
+            assert "texto-fora-do-projeto" not in json.dumps(mensagens)
+            chamadas += 1
+            return _resposta_json(_resultado_planejado("clientes.sql"))
+
         assert {funcao["function"]["name"] for funcao in kwargs["tools"]} == {
             "listar_pasta_projeto", "ler_trecho_projeto",
         }
-        assert kwargs["response_format"]["type"] == "json_schema"
-        assert kwargs["response_format"]["json_schema"]["strict"] is True
-        mensagens = kwargs["messages"]
+        assert "response_format" not in kwargs
         assert "segredo-simulado" not in json.dumps(mensagens)
         assert "texto-fora-do-projeto" not in json.dumps(mensagens)
-        nome, argumentos, esperado = passos[chamadas]
-        if nome == "ResultadoPlanejamento":
+        if chamadas == len(passos) - 1:
             chamadas += 1
-            return _resposta_json(argumentos)
+            return _resposta_texto("clientes.sql usa apelido na consulta afetada; atualizar a projeção.")
+        nome, argumentos, esperado = passos[chamadas]
         if esperado:
             retorno = json.loads(mensagens[-1]["content"])
             assert esperado <= retorno.keys()
@@ -139,7 +155,7 @@ def test_agente_investiga_com_tools_de_leitura_e_entrega_plano(tmp_path, evento)
     assert resultado.status == "planejado"
     assert resultado.plano.acoes[0].arquivo == "clientes.sql"
     assert arquivo.read_text(encoding="utf-8") == sql
-    assert chamadas == len(passos)
+    assert chamadas == len(passos) + 1
 
 
 @pytest.mark.parametrize("arquivo", ["../fora.py", ".env", "inexistente.py"])

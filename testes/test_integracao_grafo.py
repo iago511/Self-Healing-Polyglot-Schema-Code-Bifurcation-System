@@ -70,6 +70,13 @@ def _resposta_json(argumentos):
     }]}
 
 
+def _resposta_texto(conteudo):
+    return {"model": "openai/gpt-oss-120b", "choices": [{
+        "finish_reason": "stop",
+        "message": {"role": "assistant", "content": conteudo},
+    }]}
+
+
 def test_monitor_ate_publicacao_git(tmp_path, monkeypatch, banco, capsys):
     demo = os.getenv("SH_DEMO_MODE") == "1"
 
@@ -132,6 +139,9 @@ def test_monitor_ate_publicacao_git(tmp_path, monkeypatch, banco, capsys):
                 "id_proposta": contexto["proposta"]["id_proposta"], "parecer": "favoravel",
                 "justificativa": "A consulta usa a coluna atual.", "ajustes_solicitados": [],
             }, len(chamadas))
+        if "response_format" not in requisicao:
+            return _resposta_texto("clientes.py consulta a coluna removida. Atualizar a consulta.")
+        contexto = contexto["contexto"]
         assert contexto["relatorio_impacto"]["evidencias"]
         return _resposta_json({
             "status": "planejado", "justificativa": "A consulta usa a coluna antiga.", "perguntas": [],
@@ -183,7 +193,7 @@ def test_monitor_ate_publicacao_git(tmp_path, monkeypatch, banco, capsys):
         estado = repo.obter_evento(id_evento).estado
         assert estado.etapa_atual == EtapaCorrecao.AGUARDANDO_APROVACAO, estado.validacao
         assert estado.proposta.id_proposta == id_proposta
-        assert len(chamadas) == 3
+        assert len(chamadas) == 4
         assert main.main(["monitor", "--uma-vez"]) == 0
         assert len(repo.listar_pendentes()) == 1
         assert main.main(["aprovar", id_evento, "--proposta", "desatualizada", "--autor", "operador"]) == 1
