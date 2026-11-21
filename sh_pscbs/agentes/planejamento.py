@@ -1,12 +1,13 @@
 """Agente de planejamento de correções a partir do impacto no código."""
 
 import json
+import os
 from itertools import islice
 from pathlib import Path
 from typing import Literal
 
 from langchain.agents import create_agent
-from langchain.agents.structured_output import ToolStrategy
+from langchain.agents.structured_output import ProviderStrategy
 from langchain.tools import tool
 from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -14,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sh_pscbs.agentes.prompts import PLANEJAMENTO_PROMPT
 from sh_pscbs.agentes.schema import AnaliseSchema
 from sh_pscbs.modelos.llms import criar_modelos_groq, fallback_do_agente
-from sh_pscbs.orquestracao.estado import EventoSchema, PlanoCorrecao, RelatorioImpacto
+from sh_pscbs.orquestracao.estado import AcaoCorrecao, EventoSchema, PlanoCorrecao, RelatorioImpacto
 from tools.tools_alteracoes import _caminho, _ignorar_nome
 
 
@@ -135,18 +136,34 @@ def _preparar_relatorio(relatorio: RelatorioImpacto, raiz: Path) -> dict:
 
 
 def _validar_arquivos_do_plano(plano: PlanoCorrecao, raiz: Path) -> None:
-    destinos: set[Path] = set()
+    destinos: dict[str, AcaoCorrecao] = {}
+    acoes_normalizadas = []
     for acao in plano.acoes:
         destino = _caminho_planejamento(raiz, acao.arquivo)
-        if destino in destinos:
-            raise ValueError(f"O plano contém mais de uma ação para {acao.arquivo!r}.")
         if acao.operacao == "criar":
             if destino.exists() or not destino.parent.is_dir():
                 raise ValueError(f"A criação exige caminho novo em um diretório existente: {acao.arquivo!r}.")
         elif not destino.is_file():
             raise ValueError(f"O arquivo indicado para {acao.operacao} não existe: {acao.arquivo!r}.")
-        destinos.add(destino)
-        acao.arquivo = destino.relative_to(raiz).as_posix()
+        relativo = destino.relative_to(raiz).as_posix()
+        chave = os.path.normcase(os.fspath(destino))
+        anterior = destinos.get(chave)
+        if anterior is not None:
+            if anterior.operacao != acao.operacao:
+                raise ValueError(
+                    f"O plano define operações incompatíveis para {relativo!r}: "
+                    f"{anterior.operacao!r} e {acao.operacao!r}."
+                )
+            descricoes = {parte.strip() for parte in anterior.descricao.split("\n\n")}
+            if acao.descricao.strip() not in descricoes:
+                anterior.descricao = f"{anterior.descricao.rstrip()}\n\n{acao.descricao.strip()}"
+            continue
+
+        normalizada = acao.model_copy(update={"arquivo": relativo})
+        destinos[chave] = normalizada
+        acoes_normalizadas.append(normalizada)
+
+    plano.acoes = acoes_normalizadas
 
 
 def planejar_correcao(
@@ -172,7 +189,7 @@ def planejar_correcao(
         model=modelo,
         tools=_ferramentas_leitura(raiz),
         system_prompt=PLANEJAMENTO_PROMPT,
-        response_format=ToolStrategy(ResultadoPlanejamento),
+        response_format=ProviderStrategy(ResultadoPlanejamento, strict=True),
         middleware=middleware,
     )
     contexto = {
